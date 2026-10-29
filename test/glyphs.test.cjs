@@ -64,9 +64,9 @@ test('closed paths start at their last node', () => {
     0, 200, LINE, 0, 0, 0, LINE, 0
   ]
   const segments = plain(Scriptographer._getSegments(nodes, true))
-  assert.deepStrictEqual(segments.map(s => s[0]), [[0, 0], [200, 200], [0, 200]])
+  assert.deepStrictEqual(segments.map(s => s[0]), [[0, 0], [200, -200], [0, -200]])
   assert.deepStrictEqual(segments[0][2], [100, 0])
-  assert.deepStrictEqual(segments[1][1], [0, -100])
+  assert.deepStrictEqual(segments[1][1], [0, 100])
 })
 
 test('quadratic curves are raised to cubic curves, with implied points', () => {
@@ -74,9 +74,9 @@ test('quadratic curves are raised to cubic curves, with implied points', () => {
   const nodes = [0, 0, LINE, 0, 30, 0, OFF, 0, 60, 30, OFF, 0, 60, 60, QCURVE, 0]
   const segments = plain(Scriptographer._getSegments(nodes, false))
   // The implied point between the two off-curve points becomes a segment:
-  assert.deepStrictEqual(segments.map(s => s[0]), [[0, 0], [45, 15], [60, 60]])
+  assert.deepStrictEqual(segments.map(s => s[0]), [[0, 0], [45, -15], [60, -60]])
   assert.deepStrictEqual(segments[0][2], [20, 0])
-  assert.deepStrictEqual(segments[1][1], [-10, -10])
+  assert.deepStrictEqual(segments[1][1], [-10, 10])
 })
 
 test('a tool script draws a new path into the layer', () => {
@@ -113,7 +113,7 @@ test('a script changes the paths of the layer in place', () => {
   assert.strictEqual(layer.paths.length, 1)
   assert.strictEqual(layer.paths[0].key, 2)
   assert.deepStrictEqual(round(layer.paths[0].nodes),
-      [110, 20, LINE, 0, 110, 120, LINE, 0, 10, 20, LINE, 0])
+      [110, -20, LINE, 0, 110, 80, LINE, 0, 10, -20, LINE, 0])
 })
 
 test('a running tool sees the changes made in Glyphs meanwhile', () => {
@@ -178,6 +178,26 @@ test('new groups become their paths', () => {
   assert.deepStrictEqual(output, [])
   assert.deepStrictEqual(layer.paths.map(p => round(p.nodes)), [
     [5, 0, LINE, 0, 15, 0, LINE, 0],
-    [5, 10, LINE, 0, 15, 10, LINE, 0]
+    [5, -10, LINE, 0, 15, -10, LINE, 0]
+  ])
+})
+
+test('y points down in scripts, as in VectorCraft', () => {
+  // A counter-clockwise contour in Glyphs, as outer contours are:
+  const { output, Scriptographer } = createGlyphs([{
+    key: 2,
+    closed: true,
+    nodes: [0, 0, LINE, 0, 100, 0, LINE, 0, 100, 100, LINE, 0, 0, 100, LINE, 0]
+  }])
+  Scriptographer.run(`
+    function onMouseDown(event) {
+      var path = project.activeLayer.firstChild
+      print(event.point, path.bounds, path.clockwise)
+    }
+  `, 'look.js')
+  Scriptographer.mouse('mousedown', 0, 100, {})
+  // The script sees it the right way up, and counter-clockwise too:
+  assert.deepStrictEqual(output, [
+    '{ x: 0, y: -100 } { x: 0, y: -100, width: 100, height: 100 } false'
   ])
 })

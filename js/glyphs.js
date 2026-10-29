@@ -2,8 +2,10 @@
  * Scriptographer for Glyphs
  *
  * Runs Paper.js scripts on the layers of Glyphs. Each script gets its own
- * PaperScope, with one hosted project per Glyphs layer, see Project#host. The
- * plugin provides the natives as `__glyphs`:
+ * PaperScope, with one hosted project per Glyphs layer, see Project#host. As
+ * in VectorCraft, y points down in the scripts, the other way than in Glyphs,
+ * so the same scripts behave the same in both. The plugin provides the
+ * natives as `__glyphs`, in Glyphs' coordinates:
  *
  * - `getLayer()` returns the active layer as `{ key, paths }`, with paths as
  *   `{ key, closed, nodes }` and nodes flat as `x, y, type, connection`, or
@@ -32,10 +34,19 @@ var Scriptographer = new function() {
 
     // Conversion of nodes and segments
 
+    // Flips y between Glyphs and the scripts, without returning -0:
+    function flip(y) {
+        return 0 - y;
+    }
+
     function getSegments(nodes, closed) {
         var points = [];
         for (var i = 0, l = nodes.length; i < l; i += 4) {
-            points.push({ x: nodes[i], y: nodes[i + 1], type: nodes[i + 2] });
+            points.push({
+                x: nodes[i],
+                y: flip(nodes[i + 1]),
+                type: nodes[i + 2]
+            });
         }
         // Closed paths start at their last on-curve node. TrueType contours
         // without any start at the implied point between their last and first
@@ -122,7 +133,7 @@ var Scriptographer = new function() {
         ];
     }
 
-    // Returns the nodes of a path in the layer's coordinates:
+    // Returns the nodes of a path in Glyphs' coordinates of the layer:
     function getNodes(path, matrix) {
         var segments = path.segments,
             closed = path.closed,
@@ -130,7 +141,7 @@ var Scriptographer = new function() {
             nodes = [];
         function add(point, type, connection) {
             point = matrix ? matrix._transformPoint(point) : point;
-            nodes.push(point.x, point.y, type, connection || 0);
+            nodes.push(point.x, flip(point.y), type, connection || 0);
         }
         function addTo(segment, from) {
             if (from.handleOut.isZero() && segment.handleIn.isZero()) {
@@ -543,7 +554,8 @@ var Scriptographer = new function() {
             return null;
         },
 
-        // Handles the mouse events of the Script tool, in layer coordinates:
+        // Handles the mouse events of the Script tool, in Glyphs' coordinates
+        // of the layer:
         mouse: function(type, x, y, modifiers) {
             var scope = toolScope;
             if (scope) {
@@ -551,7 +563,7 @@ var Scriptographer = new function() {
                     scope.activate();
                     var view = scope.project && scope.project.view;
                     if (view) {
-                        view.dispatchMouseEvent(type, [x, y],
+                        view.dispatchMouseEvent(type, [x, flip(y)],
                                 { modifiers: modifiers });
                     }
                 });
