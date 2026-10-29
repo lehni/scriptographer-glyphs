@@ -4,19 +4,17 @@
 //
 
 #import "SGRuntime.h"
-#import <JavaScriptCore/JavaScriptCore.h>
+#import "SGScript.h"
 #import <GlyphsCore/GlyphsCore.h>
 #import <GlyphsApp/GlyphsApp.h>
 
 @implementation SGRuntime {
-	JSContext *_context;
-	JSValue *_scriptographer;
+	NSMutableDictionary<NSString *, SGScript *> *_scripts;
+	SGScript *_console;
 	// Keys for the layers and paths that scripts see, both ways:
 	NSMapTable<id, NSNumber *> *_keysByObject;
 	NSMapTable<NSNumber *, id> *_objectsByKey;
 	NSUInteger _nextKey;
-	NSMutableDictionary<NSNumber *, NSTimer *> *_timers;
-	NSUInteger _nextTimer;
 }
 
 + (instancetype)sharedRuntime {
@@ -31,53 +29,12 @@
 - (instancetype)init {
 	self = [super init];
 	if (self) {
+		_scripts = [NSMutableDictionary dictionary];
 		_keysByObject = [NSMapTable weakToStrongObjectsMapTable];
 		_objectsByKey = [NSMapTable strongToWeakObjectsMapTable];
 		_nextKey = 1;
-		_timers = [NSMutableDictionary dictionary];
-		_nextTimer = 1;
-		[self setupContext];
 	}
 	return self;
-}
-
-- (void)setupContext {
-	_context = [[JSContext alloc] init];
-	_context.name = @"Scriptographer";
-	__weak SGRuntime *weakSelf = self;
-	_context.exceptionHandler = ^(JSContext *context, JSValue *exception) {
-		NSString *stack = [exception[@"stack"] toString];
-		[weakSelf print:stack.length
-				? [NSString stringWithFormat:@"%@\n%@", exception, stack]
-				: exception.toString];
-	};
-	[_context evaluateScript:@"var self = globalThis;"
-		"var navigator = { userAgent: 'Scriptographer' };"];
-	_context[@"__glyphs"] = @{
-		@"getLayer": ^id {
-			return [weakSelf layerData] ?: [NSNull null];
-		},
-		@"setPaths": ^NSArray *(NSNumber *layerKey, NSArray *edits) {
-			return [weakSelf setPaths:edits layerKey:layerKey];
-		},
-		@"print": ^(NSString *line) {
-			[weakSelf print:line];
-		},
-		@"setTimer": ^NSNumber *(double delay, BOOL repeat, JSValue *callback) {
-			return [weakSelf setTimer:delay repeat:repeat callback:callback];
-		},
-		@"clearTimer": ^(NSNumber *timer) {
-			[weakSelf clearTimer:timer];
-		}
-	};
-	NSBundle *bundle = [NSBundle bundleForClass:[self class]];
-	for (NSString *name in @[@"paper-hosted", @"glyphs"]) {
-		NSURL *url = [bundle URLForResource:name withExtension:@"js"];
-		NSString *source = [NSString stringWithContentsOfURL:url
-				encoding:NSUTF8StringEncoding error:nil];
-		[_context evaluateScript:source withSourceURL:url];
-	}
-	_scriptographer = _context[@"Scriptographer"];
 }
 
 - (void)print:(NSString *)line {
@@ -118,7 +75,11 @@
 		if ([shape isKindOfClass:[GSPath class]]) {
 			GSPath *path = (GSPath *)shape;
 			NSMutableArray *nodes = [NSMutableArray array];
+			NSMutableArray *selection = [NSMutableArray array];
+			BOOL isSelected = [layer selectionContainsObject:path];
 			for (GSNode *node in path.nodes) {
+				if (isSelected || [layer selectionContainsObject:node])
+					[selection addObject:@(nodes.count / 4)];
 				NSPoint position = node.position;
 				[nodes addObject:@(position.x)];
 				[nodes addObject:@(position.y)];
@@ -128,7 +89,8 @@
 			[paths addObject:@{
 				@"key": [self keyForObject:path],
 				@"closed": @(path.closed),
-				@"nodes": nodes
+				@"nodes": nodes,
+				@"selection": selection
 			}];
 		}
 	}
@@ -198,25 +160,20 @@
 	return keys;
 }
 
-#pragma mark - Timers
-
-- (NSNumber *)setTimer:(double)delay repeat:(BOOL)repeat
-		callback:(JSValue *)callback {
-	NSNumber *timer = @(_nextTimer++);
-	NSTimer *instance = [NSTimer timerWithTimeInterval:MAX(delay, 1) / 1000
-			repeats:repeat block:^(NSTimer *instance) {
-		if (!repeat)
-			[self->_timers removeObjectForKey:timer];
-		[callback callWithArguments:@[]];
-	}];
-	[[NSRunLoop mainRunLoop] addTimer:instance forMode:NSRunLoopCommonModes];
-	_timers[timer] = instance;
-	return timer;
-}
-
-- (void)clearTimer:(NSNumber *)timer {
-	[_timers[timer] invalidate];
-	[_timers removeObjectForKey:timer];
+- (void)setSelection:(NSDictionary<NSString *, NSArray<NSNumber *> *> *)selection
+		layerKey:(NSNumber *)layerKey {
+	GSLayer *layer = [_objectsByKey objectForKey:layerKey];
+	NSMutableArray *nodes = [NSMutableArray array];
+	for (NSString *key in selection) {
+		GSPath *path = [_objectsByKey objectForKey:@(key.integerValue)];
+		if (![path isKindOfClass:[GSPath class]] || path.parent != layer)
+			continue;
+		for (NSNumber *index in selection[key]) {
+			if (index.unsignedIntegerValue < path.nodes.count)
+				[nodes addObject:path.nodes[index.unsignedIntegerValue]];
+		}
+	}
+	[layer replaceSelection:nodes];
 }
 
 #pragma mark - Scripts
@@ -229,70 +186,67 @@
 		[self print:error.localizedDescription];
 		return NO;
 	}
-	BOOL isRunning = [[_scriptographer invokeMethod:@"run"
-			withArguments:@[source, url.path]] toBool];
-	if (_stateHandler)
+	[self stopScript:_scripts[url.path]];
+	SGScript *script = [[SGScript alloc] initWithURL:url];
+	_scripts[url.path] = script;
+	[script execute:source];
+	BOOL isRunning = _scripts[url.path] == script;
+	if (isRunning && _stateHandler)
 		_stateHandler();
 	return isRunning;
 }
 
-- (void)stopScriptAtURL:(NSURL *)url {
-	[_scriptographer invokeMethod:@"stop" withArguments:@[url.path]];
+- (void)stopScript:(SGScript *)script {
+	if (!script)
+		return;
+	[script stop];
+	if (script == _console)
+		_console = nil;
+	else if (script.url)
+		[_scripts removeObjectForKey:script.url.path];
+	if (script == _toolScript)
+		_toolScript = nil;
 	if (_stateHandler)
 		_stateHandler();
 }
 
-- (BOOL)isScriptRunningAtURL:(NSURL *)url {
-	return [[_scriptographer invokeMethod:@"isRunning"
-			withArguments:@[url.path]] toBool];
+- (void)stopAllScripts {
+	for (SGScript *script in _scripts.allValues)
+		[self stopScript:script];
+	[self stopScript:_console];
 }
 
-- (NSURL *)toolScriptURL {
-	JSValue *file = [_scriptographer invokeMethod:@"getToolFile"
-			withArguments:@[]];
-	return file.isString ? [NSURL fileURLWithPath:file.toString] : nil;
+- (BOOL)isScriptRunningAtURL:(NSURL *)url {
+	return _scripts[url.path] != nil;
 }
 
 - (void)evaluate:(NSString *)code {
-	[_scriptographer invokeMethod:@"evaluate" withArguments:@[code]];
+	if (!_console)
+		_console = [[SGScript alloc] initWithURL:nil];
+	[_console execute:code];
+}
+
+// Scripts that stopped running go; the last one to define a tool gets the
+// Script tool's events. Only what the browser shows changing tells it.
+- (void)scriptDidWork:(SGScript *)script {
+	if (script != _console && ![script isRunning]) {
+		[self stopScript:script];
+	} else if ([script hasTool] && script != _toolScript) {
+		_toolScript = script;
+		if (_stateHandler)
+			_stateHandler();
+	}
 }
 
 #pragma mark - Events
 
-- (NSDictionary *)modifiersFromFlags:(NSEventModifierFlags)flags {
-	return @{
-		@"shift": @((flags & NSEventModifierFlagShift) != 0),
-		@"control": @((flags & NSEventModifierFlagControl) != 0),
-		@"alt": @((flags & NSEventModifierFlagOption) != 0),
-		@"meta": @((flags & NSEventModifierFlagCommand) != 0),
-		@"capsLock": @((flags & NSEventModifierFlagCapsLock) != 0)
-	};
-}
-
 - (void)handleMouse:(NSString *)type at:(NSPoint)point
 		modifiers:(NSEventModifierFlags)modifiers {
-	[_scriptographer invokeMethod:@"mouse" withArguments:@[
-		type, @(point.x), @(point.y), [self modifiersFromFlags:modifiers]
-	]];
+	[_toolScript handleMouse:type at:point modifiers:modifiers];
 }
 
 - (BOOL)handleKey:(NSString *)type event:(NSEvent *)event {
-	// The names of Paper.js for the keys without characters:
-	static NSDictionary<NSNumber *, NSString *> *names;
-	static dispatch_once_t once;
-	dispatch_once(&once, ^{
-		names = @{
-			@123: @"left", @124: @"right", @125: @"down", @126: @"up",
-			@36: @"enter", @76: @"enter", @49: @"space", @53: @"escape",
-			@51: @"backspace", @117: @"delete", @48: @"tab"
-		};
-	});
-	NSString *character = event.characters ?: @"";
-	NSString *key = names[@(event.keyCode)]
-			?: event.charactersIgnoringModifiers.lowercaseString ?: @"";
-	return [[_scriptographer invokeMethod:@"key" withArguments:@[
-		type, key, character, [self modifiersFromFlags:event.modifierFlags]
-	]] toBool];
+	return [_toolScript handleKey:type event:event];
 }
 
 @end

@@ -7,6 +7,7 @@
 #import <GlyphsCore/GlyphsCore.h>
 #import <GlyphsApp/GlyphsApp.h>
 #import "SGRuntime.h"
+#import "SGScript.h"
 #import "SGWindowController.h"
 
 // The tool in Glyphs' toolbar that hands its mouse and key events to the
@@ -27,9 +28,10 @@
 - (instancetype)init {
 	self = [super init];
 	if (self) {
-		NSBundle *bundle = [NSBundle bundleForClass:[self class]];
-		_icon = [[NSImage alloc] initWithContentsOfFile:
-				[bundle pathForImageResource:@"ToolbarIconTemplate"]];
+		_icon = [[NSImage imageWithSystemSymbolName:@"scribble.variable"
+				accessibilityDescription:@"Script"]
+				imageWithSymbolConfiguration:[NSImageSymbolConfiguration
+					configurationWithPointSize:17 weight:NSFontWeightRegular]];
 		_icon.template = YES;
 		static dispatch_once_t once;
 		dispatch_once(&once, ^{
@@ -50,13 +52,18 @@
 }
 
 - (NSString *)title {
-	NSString *name = [SGRuntime sharedRuntime].toolScriptURL
-			.lastPathComponent.stringByDeletingPathExtension;
+	NSString *name = [SGRuntime sharedRuntime].toolScript.name;
 	return name ? [NSString stringWithFormat:@"Script: %@", name] : @"Script";
 }
 
 - (NSImage *)toolBarIcon {
 	return _icon;
+}
+
+// Paths show as outlines while scripts draw, without their nodes and
+// handles, as in Scriptographer:
+- (BOOL)showNodes {
+	return NO;
 }
 
 - (NSString *)trigger {
@@ -92,7 +99,7 @@
 
 // Without a tool script, the tool selects and moves as Glyphs' own do:
 - (BOOL)hasScript {
-	return [SGRuntime sharedRuntime].toolScriptURL != nil;
+	return [SGRuntime sharedRuntime].toolScript != nil;
 }
 
 - (void)mouseDown:(NSEvent *)event {

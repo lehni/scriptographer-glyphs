@@ -1,19 +1,25 @@
 /*
  * Scriptographer for Glyphs
  *
- * Runs Paper.js scripts on the layers of Glyphs. Each script gets its own
- * PaperScope, with one hosted project per Glyphs layer, see Project#host. As
+ * Runs a Paper.js script on the layers of Glyphs, in a realm of its own with
+ * Scriptographer's bundle (scriptographer.js, shared with VectorCraft), which
+ * gives it `print()`, `console`, `Dialog`, `Palette` and the web's APIs. The
+ * script gets a PaperScope, with one hosted project per Glyphs layer, see
+ * Project#host. As
  * in VectorCraft, y points down in the scripts, the other way than in Glyphs,
  * so the same scripts behave the same in both. The plugin provides the
  * natives as `__glyphs`, in Glyphs' coordinates:
  *
  * - `getLayer()` returns the active layer as `{ key, paths }`, with paths as
- *   `{ key, closed, nodes }` and nodes flat as `x, y, type, connection`, or
- *   `null` without one.
+ *   `{ key, closed, nodes, selection }`, nodes flat as `x, y, type,
+ *   connection` and the indices of the selected ones, or `null` without one.
+ * - `setSelection(layerKey, selection)` selects the nodes of the paths,
+ *   `{ key: indices }`, and nothing else.
  * - `setPaths(layerKey, edits)` applies edits `{ key, nodes, closed }`, `{ key,
  *   remove: true }` and `{ nodes, closed }` for new paths, in one undo step,
  *   and returns the keys of the new paths in order.
- * - `print(string)`, `setTimer(delay, repeat, callback)`, `clearTimer(id)`.
+ * - `setTimer(delay, repeat, callback)` and `clearTimer(id)`, which keep the
+ *   script running while they're set.
  */
 
 var Scriptographer = new function() {
@@ -24,11 +30,8 @@ var Scriptographer = new function() {
         QCURVE = 36,
         OFFCURVE = 65,
         SMOOTH = 100,
-        // The scopes of the running scripts by their file, and the one whose
-        // tool receives the mouse events:
-        scopesByFile = {},
-        toolScope = null,
-        timersByScope = {},
+        // The script's scope, made when it first runs code:
+        scope = null,
         // The last snapshot of each layer, by its key:
         snapshots = {};
 
@@ -39,13 +42,16 @@ var Scriptographer = new function() {
         return 0 - y;
     }
 
-    function getSegments(nodes, closed) {
+    // The segments of the nodes, with the selection of the selected ones'
+    // points and handles:
+    function getSegments(nodes, closed, selection) {
         var points = [];
         for (var i = 0, l = nodes.length; i < l; i += 4) {
             points.push({
                 x: nodes[i],
                 y: flip(nodes[i + 1]),
-                type: nodes[i + 2]
+                type: nodes[i + 2],
+                selected: !!selection && selection.indexOf(i / 4) >= 0
             });
         }
         // Closed paths start at their last on-curve node. TrueType contours
@@ -85,12 +91,19 @@ var Scriptographer = new function() {
             addCurve(segments, controls, points[0], true);
         return segments.map(function(segment) {
             return [[segment.x, segment.y], segment.handleIn,
-                    segment.handleOut];
+                    segment.handleOut, segment.selection];
         });
     }
 
+    // Paper.js's segment selection: the point 1, the handles 2 and 4.
     function createSegment(point) {
-        return { x: point.x, y: point.y, handleIn: [0, 0], handleOut: [0, 0] };
+        return {
+            x: point.x,
+            y: point.y,
+            handleIn: [0, 0],
+            handleOut: [0, 0],
+            selection: point.selected ? 1 : 0
+        };
     }
 
     // Adds the curve to the on-curve point `to` with its off-curve points, or
@@ -131,15 +144,20 @@ var Scriptographer = new function() {
             (point.x - segment.x) * factor,
             (point.y - segment.y) * factor
         ];
+        if (point.selected)
+            segment.selection |= name === 'handleIn' ? 2 : 4;
     }
 
-    // Returns the nodes of a path in Glyphs' coordinates of the layer:
-    function getNodes(path, matrix) {
+    // Returns the nodes of a path in Glyphs' coordinates of the layer, and
+    // puts the indices of the selected ones into `selection`, when given:
+    function getNodes(path, matrix, selection) {
         var segments = path.segments,
             closed = path.closed,
             count = segments.length,
             nodes = [];
         function add(point, type, connection) {
+            if (selection && point.selected)
+                selection.push(nodes.length / 4);
             point = matrix ? matrix._transformPoint(point) : point;
             nodes.push(point.x, flip(point.y), type, connection || 0);
         }
@@ -147,10 +165,16 @@ var Scriptographer = new function() {
             if (from.handleOut.isZero() && segment.handleIn.isZero()) {
                 add(segment.point, LINE);
             } else {
-                add(from.point.add(from.handleOut), OFFCURVE);
-                add(segment.point.add(segment.handleIn), OFFCURVE);
+                add(getHandle(from, from.handleOut), OFFCURVE);
+                add(getHandle(segment, segment.handleIn), OFFCURVE);
                 add(segment.point, CURVE, segment.isSmooth() ? SMOOTH : 0);
             }
+        }
+        // A handle's absolute position, with whether it's selected:
+        function getHandle(segment, handle) {
+            var point = segment.point.add(handle);
+            point.selected = handle.selected;
+            return point;
         }
         if (closed) {
             // Closed paths end with their first segment, see getSegments():
@@ -194,24 +218,30 @@ var Scriptographer = new function() {
             snapshot.paths[path.key] = {
                 closed: path.closed,
                 nodes: path.nodes,
-                signature: path.closed + ':' + path.nodes.join(',')
+                selection: path.selection,
+                signature: path.closed + ':' + path.nodes.join(',') + ':'
+                        + path.selection.join(',')
             };
         });
         snapshots[data.key] = snapshot;
         return snapshot;
     }
 
-    // The records of the host for the layer and its paths:
-    function getRecords(keys, flags) {
+    // The records of the host for the layer and its paths, of the snapshot
+    // when they're its paths:
+    function getRecords(keys, flags, snapshot) {
         return {
             keys: keys,
             types: keys.map(function() {
                 return 0;
             }),
             typeNames: [flags.typeName],
-            flags: keys.map(function() {
-                // visible: 2, strokeScaling: 8, and the flags of invalidate():
-                return 2 | 8 | (flags.value || 0);
+            flags: keys.map(function(key) {
+                // visible: 2, strokeScaling: 8, and the flags of invalidate();
+                // paths with selected nodes are selected: 1.
+                var path = snapshot && snapshot.paths[key];
+                return 2 | 8 | (flags.value || 0)
+                        | (path && path.selection.length ? 1 : 0);
             })
         };
     }
@@ -225,14 +255,15 @@ var Scriptographer = new function() {
                 return key == null
                         ? getRecords([layerKey], { typeName: 'Layer' })
                         : getRecords(snapshots[layerKey].keys,
-                            { typeName: 'Path' });
+                            { typeName: 'Path' }, snapshots[layerKey]);
             },
 
             getItem: function(key) {
                 var path = key !== layerKey && getPath(key);
                 return path
                         ? ['Path', {
-                            segments: getSegments(path.nodes, path.closed),
+                            segments: getSegments(path.nodes, path.closed,
+                                    path.selection),
                             closed: path.closed
                         }]
                         : ['Layer', {}];
@@ -275,9 +306,9 @@ var Scriptographer = new function() {
         }
     }
 
-    // Binding the scopes to the active layer
+    // Binding the scope to the active layer
 
-    function bind(scope, snapshot) {
+    function bind(snapshot) {
         scope.activate();
         if (snapshot) {
             var projects = scope._glyphsProjects,
@@ -291,6 +322,12 @@ var Scriptographer = new function() {
                 project.host = createHost(snapshot.key);
                 project._glyphsSignatures = getSignatures(snapshot);
             }
+            // The paths selected in Glyphs load, so the project knows them as
+            // selected:
+            snapshot.keys.forEach(function(key) {
+                if (snapshot.paths[key].selection.length)
+                    project.getItemByKey(key);
+            });
             project.activate();
         }
     }
@@ -314,7 +351,7 @@ var Scriptographer = new function() {
             });
         if (changed.length) {
             project.invalidate(getRecords(changed,
-                    { typeName: 'Path', value: 16 }));
+                    { typeName: 'Path', value: 16 }, snapshot));
         }
         if (signatures[''] !== snapshot.keys.join(',')) {
             project.invalidate(getRecords([snapshot.key],
@@ -324,21 +361,50 @@ var Scriptographer = new function() {
         project._glyphsSignatures = getSignatures(snapshot);
     }
 
-    function bindAll() {
-        var snapshot = takeSnapshot();
-        for (var file in scopesByFile)
-            bind(scopesByFile[file], snapshot);
-        return snapshot;
-    }
-
     // Writing the changes back
 
-    function commit(scope) {
+    function commit() {
         var projects = scope._glyphsProjects;
         for (var key in projects) {
             var project = projects[key];
             if (key && project.hasChanges())
                 commitProject(project, +key);
+            if (key)
+                commitSelection(project, +key);
+        }
+    }
+
+    // Selects in Glyphs what the script selected, when it changed: the nodes
+    // of the selected segments' points and handles, or all of a path's when
+    // only the path is selected.
+    function commitSelection(project, layerKey) {
+        var snapshot = snapshots[layerKey],
+            layer = project.layers[0],
+            selection = {},
+            isChanged = false;
+        project.selectedItems.forEach(function(item) {
+            if (item instanceof paper.Path && item.parent === layer
+                    && item.key != null) {
+                var indices = [],
+                    nodes = getNodes(item, getLayerMatrix(item, layer),
+                        indices);
+                if (!indices.length) {
+                    for (var i = 0; i < nodes.length / 4; i++)
+                        indices.push(i);
+                }
+                selection[item.key] = indices;
+            }
+        });
+        snapshot.keys.forEach(function(key) {
+            var indices = selection[key] || [];
+            isChanged = isChanged
+                    || indices.join() !== snapshot.paths[key].selection.join();
+        });
+        if (isChanged) {
+            natives.setSelection(layerKey, selection);
+            snapshot = takeSnapshot();
+            if (snapshot && snapshot.key === layerKey)
+                project._glyphsSignatures = getSignatures(snapshot);
         }
     }
 
@@ -406,21 +472,16 @@ var Scriptographer = new function() {
         }
     }
 
-    function commitAll() {
-        for (var file in scopesByFile)
-            commit(scopesByFile[file]);
-    }
-
-    // Runs a callback of the scripts between binding and writing back:
+    // Runs a callback of the script between binding and writing back:
     function invoke(callback) {
         try {
-            bindAll();
+            bind(takeSnapshot());
             return callback();
         } catch (e) {
             report(e);
         } finally {
             try {
-                commitAll();
+                commit();
             } catch (e) {
                 report(e);
             }
@@ -428,62 +489,22 @@ var Scriptographer = new function() {
     }
 
     function report(error) {
-        natives.print(error && error.stack
+        console.error(error && error.stack
                 ? error + '\n' + error.stack
                 : '' + error);
     }
 
-    // The globals of the scripts
-
-    function format(args) {
-        return Array.prototype.map.call(args, function(arg) {
-            return typeof arg === 'string' ? arg : formatValue(arg);
-        }).join(' ');
-    }
-
-    function formatValue(value) {
-        if (value && typeof value === 'object' && !Array.isArray(value)
-                && value.toString !== Object.prototype.toString) {
-            return value.toString();
-        }
-        try {
-            return JSON.stringify(value);
-        } catch (e) {
-            return '' + value;
-        }
-    }
+    // The timers of the script, which the runtime gives scripts, not the
+    // bundle:
 
     function setTimer(callback, delay, repeat, args) {
-        var scope = paper,
-            id = natives.setTimer(+delay || 0, repeat, function() {
-                if (!repeat)
-                    removeTimer(scope, id);
-                invoke(function() {
-                    callback.apply(null, args);
-                });
-            }),
-            timers = timersByScope[scope._id] || (timersByScope[scope._id] = []);
-        timers.push(id);
-        return id;
+        return natives.setTimer(+delay || 0, repeat, function() {
+            invoke(function() {
+                callback.apply(null, args);
+            });
+        });
     }
 
-    function removeTimer(scope, id) {
-        var timers = timersByScope[scope._id],
-            index = timers ? timers.indexOf(id) : -1;
-        if (index >= 0)
-            timers.splice(index, 1);
-    }
-
-    self.print = function() {
-        natives.print(format(arguments));
-    };
-    self.console = {
-        log: self.print,
-        info: self.print,
-        warn: self.print,
-        error: self.print,
-        debug: self.print
-    };
     self.setTimeout = function(callback, delay) {
         return setTimer(callback, delay, false,
                 Array.prototype.slice.call(arguments, 2));
@@ -494,35 +515,31 @@ var Scriptographer = new function() {
     };
     self.clearTimeout = self.clearInterval = function(id) {
         natives.clearTimer(id);
-        for (var key in timersByScope) {
-            var index = timersByScope[key].indexOf(id);
-            if (index >= 0)
-                timersByScope[key].splice(index, 1);
-        }
     };
+    self.requestAnimationFrame = function(callback) {
+        return setTimer(function() {
+            callback(performance.now());
+        }, 1000 / 60, false, []);
+    };
+    self.cancelAnimationFrame = self.clearTimeout;
 
     // The API for the plugin
 
-    function stop(file) {
-        var scope = scopesByFile[file];
-        if (scope) {
-            (timersByScope[scope._id] || []).forEach(natives.clearTimer);
-            delete timersByScope[scope._id];
-            delete scopesByFile[file];
-            if (toolScope === scope)
-                toolScope = null;
-            scope.remove();
-        }
+    function dispatch(callback) {
+        var view = scope && scope.project && scope.project.view;
+        if (view)
+            invoke(function() {
+                callback(view);
+            });
     }
 
     return {
-        // Runs a script, stopping its previous run first. Returns whether it
-        // keeps running: with a tool, timers or animation.
-        run: function(source, file) {
-            stop(file);
-            var scope = new paper.PaperScope();
-            scope._glyphsProjects = {};
-            scopesByFile[file] = scope;
+        // Runs the script's code, or a line of the console, in its scope:
+        execute: function(source, file) {
+            if (!scope) {
+                scope = new paper.PaperScope();
+                scope._glyphsProjects = {};
+            }
             invoke(function() {
                 // Without a layer, scripts still get a project:
                 if (!scope.project) {
@@ -530,76 +547,56 @@ var Scriptographer = new function() {
                             new scope.Size(1, 1));
                 }
                 scope.PaperScript.execute(source, scope, { url: file });
-                if (scope.tool)
-                    toolScope = scope;
             });
-            var isRunning = !!(scope.tool || (timersByScope[scope._id] || [])
-                    .length || scope.view && scope.view.responds('frame'));
-            if (!isRunning)
-                stop(file);
-            return isRunning;
         },
 
-        stop: stop,
-
-        isRunning: function(file) {
-            return !!scopesByFile[file];
+        // Calls a function of the bundle that the runtime calls the script
+        // with, as `handlePaletteEvent()`, between binding and writing back:
+        call: function(func, args) {
+            return invoke(function() {
+                return func.apply(null, args);
+            });
         },
 
-        getToolFile: function() {
-            for (var file in scopesByFile) {
-                if (scopesByFile[file] === toolScope)
-                    return file;
+        // Whether the script keeps running for its tool or its animation; the
+        // runtime adds its timers and palettes:
+        isRunning: function() {
+            return !!(scope && (scope.tool
+                    || scope.view && scope.view.responds('frame')));
+        },
+
+        hasTool: function() {
+            return !!(scope && scope.tool);
+        },
+
+        stop: function() {
+            if (scope) {
+                scope.remove();
+                scope = null;
             }
-            return null;
         },
 
         // Handles the mouse events of the Script tool, in Glyphs' coordinates
         // of the layer:
         mouse: function(type, x, y, modifiers) {
-            var scope = toolScope;
-            if (scope) {
-                invoke(function() {
-                    scope.activate();
-                    var view = scope.project && scope.project.view;
-                    if (view) {
-                        view.dispatchMouseEvent(type, [x, flip(y)],
-                                { modifiers: modifiers });
-                    }
-                });
-            }
+            dispatch(function(view) {
+                view.dispatchMouseEvent(type, [x, flip(y)],
+                        { modifiers: modifiers });
+            });
         },
 
         // Handles the key events of the Script tool, and returns whether its
         // script responds to them:
         key: function(type, key, character, modifiers) {
-            var scope = toolScope,
-                isHandled = !!(scope && scope.tool.responds(type));
+            var isHandled = !!(scope && scope.tool
+                    && scope.tool.responds(type));
             if (isHandled) {
-                invoke(function() {
-                    scope.activate();
-                    var view = scope.project && scope.project.view;
-                    if (view) {
-                        view.dispatchKeyEvent(type, key,
-                                { character: character, modifiers: modifiers });
-                    }
+                dispatch(function(view) {
+                    view.dispatchKeyEvent(type, key,
+                            { character: character, modifiers: modifiers });
                 });
             }
             return isHandled;
-        },
-
-        // Evaluates code of the console in the scope of the tool's script, or
-        // a scope of its own:
-        evaluate: function(code) {
-            var scope = toolScope;
-            return invoke(function() {
-                if (scope)
-                    scope.activate();
-                var result = (0, eval)(code);
-                if (result !== undefined)
-                    natives.print(formatValue(result));
-                return result;
-            });
         },
 
         // For tests:
