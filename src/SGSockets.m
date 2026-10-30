@@ -50,28 +50,32 @@
 }
 
 - (void)stop {
-	[_session invalidateAndCancel];
-	_session = nil;
-	[_sockets removeAllObjects];
-	[_receivers removeAllObjects];
+	@synchronized (self) {
+		[_session invalidateAndCancel];
+		_session = nil;
+		[_sockets removeAllObjects];
+		[_receivers removeAllObjects];
+	}
 }
 
 - (NSNumber *)open:(NSString *)url protocols:(NSArray<NSString *> *)protocols
 		receive:(JSValue *)receive {
-	if (!_session) {
-		_session = [NSURLSession sessionWithConfiguration:
-				NSURLSessionConfiguration.ephemeralSessionConfiguration
-				delegate:self delegateQueue:NSOperationQueue.mainQueue];
+	@synchronized (self) {
+		if (!_session) {
+			_session = [NSURLSession sessionWithConfiguration:
+					NSURLSessionConfiguration.ephemeralSessionConfiguration
+					delegate:self delegateQueue:NSOperationQueue.mainQueue];
+		}
+		NSNumber *number = @(_nextSocket++);
+		NSURLSessionWebSocketTask *task = [_session
+				webSocketTaskWithURL:[NSURL URLWithString:url]
+				protocols:protocols];
+		_sockets[number] = task;
+		[_receivers setObject:receive forKey:task];
+		[task resume];
+		[self read:task];
+		return number;
 	}
-	NSNumber *number = @(_nextSocket++);
-	NSURLSessionWebSocketTask *task = [_session
-			webSocketTaskWithURL:[NSURL URLWithString:url]
-			protocols:protocols];
-	_sockets[number] = task;
-	[_receivers setObject:receive forKey:task];
-	[task resume];
-	[self read:task];
-	return number;
 }
 
 // Reads the socket's messages, one after another, until it closes:
@@ -105,41 +109,47 @@
 }
 
 - (void)send:(id)data to:(NSNumber *)number {
-	NSURLSessionWebSocketMessage *message = [data isKindOfClass:[NSString class]]
-			? [[NSURLSessionWebSocketMessage alloc] initWithString:data]
-			: [[NSURLSessionWebSocketMessage alloc] initWithData:data];
-	[_sockets[number] sendMessage:message completionHandler:^(NSError *error) {
-	}];
+	@synchronized (self) {
+		NSURLSessionWebSocketMessage *message = [data isKindOfClass:[NSString class]]
+				? [[NSURLSessionWebSocketMessage alloc] initWithString:data]
+				: [[NSURLSessionWebSocketMessage alloc] initWithData:data];
+		[_sockets[number] sendMessage:message completionHandler:^(NSError *error) {
+		}];
+	}
 }
 
 - (void)close:(NSNumber *)number code:(NSInteger)code
 		reason:(NSString *)reason {
-	[_sockets[number] cancelWithCloseCode:code
-			reason:[reason dataUsingEncoding:NSUTF8StringEncoding]];
+	@synchronized (self) {
+		[_sockets[number] cancelWithCloseCode:code
+				reason:[reason dataUsingEncoding:NSUTF8StringEncoding]];
+	}
 }
 
 // Tells the script once that its socket closed, cleanly or not:
 - (void)closed:(NSURLSessionTask *)task code:(NSInteger)code
 		reason:(NSData *)reason error:(NSError *)error {
-	JSValue *receive = [_receivers objectForKey:task];
-	if (!receive)
-		return;
-	[_receivers removeObjectForKey:task];
-	for (NSNumber *number in [_sockets allKeysForObject:
-			(NSURLSessionWebSocketTask *)task])
-		[_sockets removeObjectForKey:number];
-	BOOL isClean = code != NSURLSessionWebSocketCloseCodeInvalid && !error;
-	if (error) {
-		_deliver(receive, SGValue(@{ @"type": @"error",
-				@"message": error.localizedDescription }));
+	@synchronized (self) {
+		JSValue *receive = [_receivers objectForKey:task];
+		if (!receive)
+			return;
+		[_receivers removeObjectForKey:task];
+		for (NSNumber *number in [_sockets allKeysForObject:
+				(NSURLSessionWebSocketTask *)task])
+			[_sockets removeObjectForKey:number];
+		BOOL isClean = code != NSURLSessionWebSocketCloseCodeInvalid && !error;
+		if (error) {
+			_deliver(receive, SGValue(@{ @"type": @"error",
+					@"message": error.localizedDescription }));
+		}
+		_deliver(receive, SGValue(@{
+			@"type": @"close",
+			@"code": @(isClean ? code : 1006),
+			@"reason": reason ? [[NSString alloc] initWithData:reason
+					encoding:NSUTF8StringEncoding] ?: @"" : @"",
+			@"wasClean": @(isClean)
+		}));
 	}
-	_deliver(receive, SGValue(@{
-		@"type": @"close",
-		@"code": @(isClean ? code : 1006),
-		@"reason": reason ? [[NSString alloc] initWithData:reason
-				encoding:NSUTF8StringEncoding] ?: @"" : @"",
-		@"wasClean": @(isClean)
-	}));
 }
 
 #pragma mark - NSURLSessionWebSocketDelegate

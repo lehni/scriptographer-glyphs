@@ -28,9 +28,16 @@ NS_ASSUME_NONNULL_BEGIN
 // The script that last defined a tool, which the Script tool hands its events:
 @property (nonatomic, readonly, nullable) SGScript *toolScript;
 
+// Runs the script, stopping the others unless they keep running
+// (`script.keepAlive`) or are the tool's, as VectorCraft does:
 - (BOOL)runScriptAtURL:(NSURL *)url;
+// Runs the `__init__` scripts in the folders, as Glyphs starts, then calls
+// their `onStartup`:
+- (void)runInitScriptsIn:(NSArray<NSURL *> *)folders;
 // Stops every script and the console, as VectorCraft's Stop does:
 - (void)stopAllScripts;
+// Calls the handler of every script that has it, `onEditOptions`…:
+- (void)callHandler:(NSString *)name;
 - (BOOL)isScriptRunningAtURL:(NSURL *)url;
 // Runs a line of the console, in its own realm, made on the first line and
 // kept until the scripts stop:
@@ -51,6 +58,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setSelection:(NSDictionary<NSString *, NSArray<NSNumber *> *> *)selection
 		layerKey:(NSNumber *)layerKey;
 - (void)scriptDidWork:(SGScript *)script;
+
+// The edit view draws the scripts' overlays over the layer, and asks for it
+// again when they change:
+- (void)drawOverlaysInContext:(CGContextRef)context scale:(double)scale;
+- (void)redrawView;
 
 @end
 

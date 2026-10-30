@@ -5,6 +5,8 @@
 
 #import <Cocoa/Cocoa.h>
 
+@class SGWorkerLink;
+
 NS_ASSUME_NONNULL_BEGIN
 
 // A running script, or the console, in a JavaScriptCore realm of its own with
@@ -20,12 +22,38 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (instancetype)initWithURL:(nullable NSURL *)url;
 
-// Runs the script's code, or a line of the console:
+// A worker's realm, on its thread, with its link to who it works for:
+- (instancetype)initWithURL:(NSURL *)url worker:(nullable SGWorkerLink *)link;
+
+// A worker's: a message from its parent, as `message`, and the port of a
+// script that connects to a shared one, as `connect`:
+- (void)receiveWorkerMessage:(NSArray *)message;
+- (void)connectWorkerPort:(id)port;
+
+// Runs the script's code, or a line of the console, as PaperScript:
 - (void)execute:(NSString *)source;
+// Runs code as a classic script, as workers run theirs:
+- (void)evaluate:(NSString *)source;
+
+// The URL relative ones resolve against, `location`: the script's file, as
+// in VectorCraft.
+- (void)setLocation:(NSURL *)url;
 
 // Whether it keeps running: with a tool, animation, timers or palettes.
 - (BOOL)isRunning;
 - (BOOL)hasTool;
+
+// Whether the script set `script.keepAlive`, to keep running when another
+// script runs:
+- (BOOL)keepsAlive;
+
+// Calls the handler the script exported, `onStop`, `onStartup`…: whether it
+// has it.
+- (BOOL)callHandler:(NSString *)name;
+
+// Draws the script's overlay into the edit view's context, in the layer's
+// coordinates, `scale` its pixels per unit:
+- (void)drawOverlayInContext:(CGContextRef)context scale:(double)scale;
 
 // Stops it, closing its palettes, and lets go of its realm:
 - (void)stop;

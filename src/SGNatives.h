@@ -38,8 +38,10 @@ SGMake SGValue(id value);
 JSValue *SGBytesValue(JSContext *context, NSData *data);
 NSData *SGDataOfValue(JSValue *value);
 
-// Throws an Error, or a DOMException of `name`, in the calling context:
+// Throws an Error, an error of the realm's class `name` (`TypeError`,
+// `RangeError`), or a DOMException of `name`, in the calling context:
 void SGThrowError(NSString *message);
+void SGThrowErrorOfClass(NSString *name, NSString *message);
 void SGThrowDOMException(NSString *name, NSString *message);
 
 NS_ASSUME_NONNULL_END

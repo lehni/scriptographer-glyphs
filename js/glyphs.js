@@ -20,6 +20,8 @@
  *   and returns the keys of the new paths in order.
  * - `setTimer(delay, repeat, callback)` and `clearTimer(id)`, which keep the
  *   script running while they're set.
+ * - `bindView()`, which makes the canvas made last the overlay's, drawing
+ *   into Glyphs' edit view.
  */
 
 var Scriptographer = new function() {
@@ -32,6 +34,10 @@ var Scriptographer = new function() {
         SMOOTH = 100,
         // The script's scope, made when it first runs code:
         scope = null,
+        // The overlay's canvas context, drawing into the edit view:
+        overlay = null,
+        // The handlers the script exported, which the runtime calls:
+        handlers = {},
         // The last snapshot of each layer, by its key:
         snapshots = {};
 
@@ -408,6 +414,18 @@ var Scriptographer = new function() {
         }
     }
 
+    // The classes of items dropped so far, which are warned about once:
+    var dropped = {};
+
+    function warnDropped(item) {
+        var name = item.className;
+        if (!dropped[name]) {
+            dropped[name] = true;
+            console.warn('Glyphs only keeps paths: ' + name
+                    + ' items are dropped.');
+        }
+    }
+
     function commitProject(project, layerKey) {
         var layer = project.layers[0],
             changes = project.takeChanges(),
@@ -447,12 +465,16 @@ var Scriptographer = new function() {
                     added.push(child);
                 }
             } else {
-                // Glyphs only has paths: other items become their paths.
-                child.getItems({ class: paper.Path }).forEach(function(path) {
+                // Glyphs only has paths: groups and compound paths become
+                // theirs, and what holds none is dropped, with a warning.
+                var paths = child.getItems({ class: paper.Path });
+                paths.forEach(function(path) {
                     var nodes = getNodes(path, getLayerMatrix(path, layer));
                     if (nodes.length)
                         edits.push({ nodes: nodes, closed: path.closed });
                 });
+                if (!paths.length)
+                    warnDropped(child);
                 isFlattened = true;
             }
         });
@@ -472,16 +494,19 @@ var Scriptographer = new function() {
         }
     }
 
-    // Runs a callback of the script between binding and writing back:
+    // Runs a callback of the script between binding and writing back, once
+    // it has a scope: classic scripts, as workers run, have none.
     function invoke(callback) {
         try {
-            bind(takeSnapshot());
+            if (scope)
+                bind(takeSnapshot());
             return callback();
         } catch (e) {
             report(e);
         } finally {
             try {
-                commit();
+                if (scope)
+                    commit();
             } catch (e) {
                 report(e);
             }
@@ -546,8 +571,57 @@ var Scriptographer = new function() {
                     scope._glyphsProjects[''] = new scope.Project(
                             new scope.Size(1, 1));
                 }
-                scope.PaperScript.execute(source, scope, { url: file });
+                var exported = scope.PaperScript.execute(source, scope, {
+                    url: file,
+                    handlers: ['onStartup', 'onShutdown', 'onStop',
+                            'onAppActivate', 'onAppDeactivate',
+                            'onEditOptions']
+                });
+                // A script with top-level await exports once it's done:
+                if (exported && typeof exported.then === 'function') {
+                    exported.then(function(exported) {
+                        Object.assign(handlers, exported);
+                    }, report);
+                } else {
+                    Object.assign(handlers, exported);
+                }
             });
+        },
+
+        // The global `script`, as VectorCraft's runtime sets it up: its file
+        // and folder as LocalFiles, `keepAlive`, which it sets to keep
+        // running when another script runs, and `preferences`, as it last
+        // left them, in Paper.js JSON, so they come back as Colors, Points…
+        setScript: function(file, directory, preferences) {
+            self.script = {
+                file: file ? new LocalFile(file) : null,
+                directory: directory ? new LocalFile(directory) : null,
+                keepAlive: false,
+                preferences: preferences
+                        ? paper.Base.importJSON(preferences) : {}
+            };
+        },
+
+        getPreferences: function() {
+            var script = self.script;
+            return script && script.preferences
+                    ? paper.Base.exportJSON(script.preferences) : null;
+        },
+
+        keepsAlive: function() {
+            return !!(self.script && self.script.keepAlive === true);
+        },
+
+        // Calls the handler the script exported, if it has it:
+        callHandler: function(name) {
+            var handler = handlers[name];
+            if (typeof handler === 'function') {
+                invoke(function() {
+                    handler();
+                });
+                return true;
+            }
+            return false;
         },
 
         // Calls a function of the bundle that the runtime calls the script
@@ -563,6 +637,33 @@ var Scriptographer = new function() {
         isRunning: function() {
             return !!(scope && (scope.tool
                     || scope.view && scope.view.responds('frame')));
+        },
+
+        // Whether the script draws over the layer, with the draw handlers of
+        // its items (Item#onDraw, Item#onDrawSelection):
+        hasDrawHandlers: function() {
+            var project = scope && scope.project;
+            return !!(project && project.hasDrawHandlers
+                    && project.hasDrawHandlers());
+        },
+
+        // Draws the handlers over the layer, with `matrix` from the script's
+        // coordinates to the view's, without writing anything back:
+        drawOverlay: function(matrix, pixelRatio) {
+            if (!this.hasDrawHandlers())
+                return;
+            try {
+                bind(takeSnapshot());
+                if (!overlay) {
+                    var canvas = new OffscreenCanvas(1, 1);
+                    natives.bindView();
+                    overlay = canvas.getContext('2d');
+                }
+                scope.project.draw(overlay, new paper.Matrix(matrix),
+                        pixelRatio);
+            } catch (e) {
+                report(e);
+            }
         },
 
         hasTool: function() {

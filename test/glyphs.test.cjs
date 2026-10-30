@@ -264,3 +264,13 @@ test('scripts see the nodes selected in Glyphs, and select their own', () => {
   Scriptographer.mouse('mouseup', 0, 0, {})
   assert.deepStrictEqual(layer.paths.map(p => plain(p.selection)), [[1], [1]])
 })
+
+test('items without paths are dropped, with a warning', () => {
+  const { layer, output, Scriptographer } = createGlyphs([])
+  Scriptographer.execute(`
+    new PointText([0, 0]).content = 'a'
+    new PointText([0, 10]).content = 'b'
+  `, 'text.js')
+  assert.deepStrictEqual(layer.paths, [])
+  assert.deepStrictEqual(output, ['Glyphs only keeps paths: PointText items are dropped.'])
+})

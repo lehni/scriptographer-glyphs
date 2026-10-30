@@ -15,24 +15,11 @@
 #import "SGClone.h"
 #import "SGShared.h"
 #import "SGPorts.h"
+#import "SGCanvas.h"
+#import "SGWorkers.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
-
-// The canvas's properties, which the bundle defines on its contexts as it
-// loads, as VectorCraft's drawing.rs lists them:
-static NSArray<NSString *> *canvasProperties(void) {
-	return @[
-		@"fillStyle", @"strokeStyle", @"lineWidth", @"lineCap", @"lineJoin",
-		@"miterLimit", @"lineDashOffset", @"globalAlpha",
-		@"globalCompositeOperation", @"font", @"textAlign", @"textBaseline",
-		@"direction", @"lang", @"imageSmoothingEnabled",
-		@"imageSmoothingQuality", @"shadowBlur", @"shadowColor",
-		@"shadowOffsetX", @"shadowOffsetY", @"filter", @"letterSpacing",
-		@"wordSpacing", @"fontKerning", @"fontStretch", @"fontVariantCaps",
-		@"textRendering"
-	];
-}
 
 // The DOMException browsers give for a file system error: `isWriting` tells
 // a change from a read.
@@ -75,6 +62,13 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 	SGBroadcast *_broadcast;
 	SGLocks *_locks;
 	SGPorts *_ports;
+	SGCanvas *_canvas;
+	SGWorkers *_workers;
+	// The preferences the script last left, as kept:
+	NSString *_preferences;
+	// A worker's link to who it works for, and what receives from them:
+	SGWorkerLink *_link;
+	JSValue *_workerReceive;
 }
 
 + (JSVirtualMachine *)virtualMachine {
@@ -105,9 +99,14 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 }
 
 - (instancetype)initWithURL:(NSURL *)url {
+	return [self initWithURL:url worker:nil];
+}
+
+- (instancetype)initWithURL:(NSURL *)url worker:(SGWorkerLink *)link {
 	self = [super init];
 	if (self) {
 		_url = url;
+		_link = link;
 		_name = url ? url.lastPathComponent.stringByDeletingPathExtension
 				: @"Console";
 		_timers = [NSMutableDictionary dictionary];
@@ -126,19 +125,29 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 		_broadcast = [[SGBroadcast alloc] initWithDeliver:deliver];
 		_locks = [[SGLocks alloc] initWithDeliver:deliver];
 		_ports = [[SGPorts alloc] initWithDeliver:deliver];
+		_canvas = [[SGCanvas alloc] init];
+		_workers = [[SGWorkers alloc] initWithDeliver:deliver ports:_ports
+				url:url link:link];
 		[self setupContext];
 	}
 	return self;
 }
 
 - (void)setupContext {
-	_context = [[JSContext alloc]
-			initWithVirtualMachine:[SGScript virtualMachine]];
+	// A worker runs on a thread of its own, so in a VM of its own:
+	_context = [[JSContext alloc] initWithVirtualMachine:_link
+			? [[JSVirtualMachine alloc] init] : [SGScript virtualMachine]];
 	_context.name = [@"Scriptographer: " stringByAppendingString:_name];
-	SGRuntime *runtime = [SGRuntime sharedRuntime];
+	SGWorkerLink *link = _link;
 	_context.exceptionHandler = ^(JSContext *context, JSValue *exception) {
+		// An uncaught error in a worker goes to its Worker, which shows it
+		// unless a handler prevents it, and the worker goes on:
+		if (link) {
+			[link reportError:exception.toString];
+			return;
+		}
 		NSString *stack = [exception[@"stack"] toString];
-		[runtime print:stack.length
+		[SGScript print:stack.length
 				? [NSString stringWithFormat:@"%@\n%@", exception, stack]
 				: exception.toString];
 	};
@@ -174,6 +183,26 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 		return [SGClone deserialize:data inContext:context ports:nil];
 	};
 	_scriptographer = _context[@"Scriptographer"];
+	if (_url)
+		[self setLocation:_url];
+	// A worker's global object gets what a worker's has, and gives what
+	// receives its parent's messages or the ports that connect; a script's
+	// gets `script`, with its preferences:
+	if (_link) {
+		_workerReceive = [_natives invokeMethod:@"setupWorker"
+				withArguments:@[_link.name, @(_link.isShared)]];
+	} else if (_url) {
+		_preferences = [NSString stringWithContentsOfURL:[self preferencesURL]
+				encoding:NSUTF8StringEncoding error:nil];
+		[_scriptographer invokeMethod:@"setScript" withArguments:@[
+			_url.path, _url.URLByDeletingLastPathComponent.path,
+			_preferences ?: [NSNull null]
+		]];
+	}
+}
+
+- (void)setLocation:(NSURL *)url {
+	[_natives invokeMethod:@"setLocation" withArguments:@[url.absoluteString]];
 }
 
 #pragma mark - Natives
@@ -182,7 +211,7 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 	__weak SGScript *weakSelf = self;
 	return @{
 		@"print": ^(NSString *line) {
-			[[SGRuntime sharedRuntime] print:line];
+			[SGScript print:line];
 		},
 		@"now": ^double {
 			SGScript *script = weakSelf;
@@ -224,8 +253,17 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 				return [[weakSelf items:session] valueForKey:@"firstObject"];
 			}
 		},
+		// Dialogs show on the main thread, which a worker waits for:
 		@"ask": ^id(NSDictionary *question) {
-			return [weakSelf ask:question] ?: [NSNull null];
+			__block id answer;
+			void (^ask)(void) = ^{
+				answer = [weakSelf ask:question];
+			};
+			if (NSThread.isMainThread)
+				ask();
+			else
+				dispatch_sync(dispatch_get_main_queue(), ask);
+			return answer ?: [NSNull null];
 		},
 		@"fs": [self fileSystemNatives],
 		@"fetch": [_requests natives],
@@ -257,17 +295,8 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 				return [SGURLParser serializeQuery:pairs];
 			}
 		},
-		// Canvases are still to come: the bundle reads the properties as it
-		// loads, and makes a canvas only when a script asks for one.
-		@"canvas": @{
-			@"properties": canvasProperties(),
-			@"methods": @{},
-			@"pathMethods": @{},
-			@"release": ^{},
-			@"create": ^{
-				SGThrowError(@"OffscreenCanvas isn't supported in Glyphs yet.");
-			}
-		}
+		@"canvas": [_canvas natives],
+		@"worker": [_workers natives]
 	};
 }
 
@@ -275,14 +304,21 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 	__weak SGScript *weakSelf = self;
 	SGRuntime *runtime = [SGRuntime sharedRuntime];
 	return @{
+		// Workers have no document:
 		@"getLayer": ^id {
-			return [runtime layerData] ?: [NSNull null];
+			SGScript *script = weakSelf;
+			return script && !script->_link ? [runtime layerData] ?: [NSNull null]
+					: [NSNull null];
 		},
 		@"setPaths": ^NSArray *(NSNumber *layerKey, NSArray *edits) {
 			return [runtime setPaths:edits layerKey:layerKey];
 		},
 		@"setSelection": ^(NSNumber *layerKey, NSDictionary *selection) {
 			[runtime setSelection:selection layerKey:layerKey];
+		},
+		@"bindView": ^{
+			SGScript *script = weakSelf;
+			[script->_canvas bindView];
 		},
 		@"setTimer": ^NSNumber *(double delay, BOOL repeat, JSValue *callback) {
 			return [weakSelf setTimer:delay repeat:repeat callback:callback];
@@ -723,7 +759,7 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 		[callback callWithArguments:@[]];
 		[script didWork];
 	}];
-	[[NSRunLoop mainRunLoop] addTimer:instance forMode:NSRunLoopCommonModes];
+	[[self runLoop] addTimer:instance forMode:NSRunLoopCommonModes];
 	_timers[timer] = instance;
 	return timer;
 }
@@ -741,6 +777,81 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 	[self didWork];
 }
 
+- (void)evaluate:(NSString *)source {
+	[_context evaluateScript:source withSourceURL:_url];
+	[self didWork];
+}
+
+// Output goes to the console, from any thread:
++ (void)print:(NSString *)line {
+	if (NSThread.isMainThread) {
+		[[SGRuntime sharedRuntime] print:line];
+	} else {
+		dispatch_async(dispatch_get_main_queue(), ^{
+			[[SGRuntime sharedRuntime] print:line];
+		});
+	}
+}
+
+// The run loop of the script's thread, where its timers fire:
+- (NSRunLoop *)runLoop {
+	return _link ? NSRunLoop.currentRunLoop : NSRunLoop.mainRunLoop;
+}
+
+- (void)receiveWorkerMessage:(NSArray *)message {
+	SGPorts *ports = _ports;
+	[self deliver:^id(JSContext *context) {
+		NSArray *received = nil;
+		JSValue *event = [JSValue valueWithNewObjectInContext:context];
+		event[@"type"] = @"message";
+		event[@"data"] = [ports receive:message inContext:context
+				ports:&received];
+		event[@"ports"] = received;
+		return event;
+	} to:_workerReceive];
+}
+
+- (void)connectWorkerPort:(id)port {
+	SGPorts *ports = _ports;
+	[self deliver:^id(JSContext *context) {
+		return [ports adoptPort:port];
+	} to:_workerReceive];
+}
+
+// Kept next to its localStorage, when they changed:
+- (NSURL *)preferencesURL {
+	return [[self storageURL].URLByDeletingPathExtension
+			URLByAppendingPathExtension:@"preferences.json"];
+}
+
+- (void)keepPreferences {
+	JSValue *value = [_scriptographer invokeMethod:@"getPreferences"
+			withArguments:@[]];
+	NSString *preferences = value.isString ? value.toString : nil;
+	if (_url && preferences && ![preferences isEqualToString:_preferences]) {
+		_preferences = preferences;
+		[NSFileManager.defaultManager
+				createDirectoryAtURL:[self preferencesURL]
+					.URLByDeletingLastPathComponent
+				withIntermediateDirectories:YES attributes:nil error:nil];
+		[preferences writeToURL:[self preferencesURL] atomically:YES
+				encoding:NSUTF8StringEncoding error:nil];
+	}
+}
+
+- (BOOL)keepsAlive {
+	return [_scriptographer invokeMethod:@"keepsAlive" withArguments:@[]]
+			.toBool;
+}
+
+- (BOOL)callHandler:(NSString *)name {
+	BOOL hasHandler = [_scriptographer invokeMethod:@"callHandler"
+			withArguments:@[name]].toBool;
+	if (hasHandler)
+		[self didWork];
+	return hasHandler;
+}
+
 - (BOOL)isRunning {
 	return _context && (_timers.count || [self isBusy]
 			|| [_scriptographer invokeMethod:@"isRunning" withArguments:@[]]
@@ -751,7 +862,7 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 
 - (NSArray<id<SGNativeGroup>> *)groups {
 	return @[_requests, _codecs, _sockets, _eventSources, _broadcast,
-			_locks, _ports];
+			_locks, _ports, _canvas, _workers];
 }
 
 - (BOOL)isBusy {
@@ -762,6 +873,17 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 	return NO;
 }
 
+// Scripts' coordinates have y down, the layer's up:
+- (void)drawOverlayInContext:(CGContextRef)context scale:(double)scale {
+	if (!_context)
+		return;
+	[_canvas drawView:context draw:^{
+		[self->_scriptographer invokeMethod:@"drawOverlay" withArguments:@[
+			@[@1, @0, @0, @-1, @0, @0], @(scale)
+		]];
+	}];
+}
+
 - (BOOL)hasTool {
 	return [_scriptographer invokeMethod:@"hasTool" withArguments:@[]].toBool;
 }
@@ -769,7 +891,8 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 // After each unit of work: the palettes it opened or changed show, and the
 // runtime learns whether the script still runs.
 - (void)didWork {
-	if (!_context)
+	// A worker runs until it's closed, and shows no palettes or overlays:
+	if (!_context || _link)
 		return;
 	NSArray *palettes = [[_natives invokeMethod:@"takePalettes"
 			withArguments:@[]] toArray];
@@ -781,6 +904,11 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 			[weakSelf handlePalette:paletteId type:type name:name value:value];
 		}];
 	}
+	[self keepPreferences];
+	// What the overlay draws may have changed with the work:
+	if ([[_scriptographer invokeMethod:@"hasDrawHandlers" withArguments:@[]]
+			toBool])
+		[[SGRuntime sharedRuntime] redrawView];
 	[[SGRuntime sharedRuntime] scriptDidWork:self];
 }
 

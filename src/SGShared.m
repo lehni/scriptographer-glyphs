@@ -59,45 +59,53 @@ static NSMutableArray<SGChannel *> *openChannels;
 }
 
 - (void)stop {
-	for (NSNumber *number in _channels.allKeys)
-		[self close:number];
+	@synchronized ([SGBroadcast class]) {
+		for (NSNumber *number in _channels.allKeys)
+			[self close:number];
+	}
 }
 
 - (NSNumber *)open:(NSString *)name receive:(JSValue *)receive {
-	SGChannel *channel = [[SGChannel alloc] init];
-	channel.name = name;
-	channel.receive = receive;
-	channel.owner = self;
-	[openChannels addObject:channel];
-	NSNumber *number = @(_nextChannel++);
-	_channels[number] = channel;
-	return number;
+	@synchronized ([SGBroadcast class]) {
+		SGChannel *channel = [[SGChannel alloc] init];
+		channel.name = name;
+		channel.receive = receive;
+		channel.owner = self;
+		[openChannels addObject:channel];
+		NSNumber *number = @(_nextChannel++);
+		_channels[number] = channel;
+		return number;
+	}
 }
 
 - (void)close:(NSNumber *)number {
-	[openChannels removeObject:_channels[number]];
-	[_channels removeObjectForKey:number];
+	@synchronized ([SGBroadcast class]) {
+		[openChannels removeObject:_channels[number]];
+		[_channels removeObjectForKey:number];
+	}
 }
 
 // To the other channels of its name, which receive it on their scripts'
 // next turn, in order:
 - (void)post:(JSValue *)message from:(NSNumber *)number {
-	SGChannel *sender = _channels[number];
-	if (!sender)
-		return;
-	id data = [SGClone serialize:message natives:_scriptNatives ports:nil];
-	if (!data)
-		return;
-	for (SGChannel *channel in openChannels) {
-		if (channel == sender || ![channel.name isEqualToString:sender.name])
-			continue;
-		channel.owner->_deliver(channel.receive, ^id(JSContext *context) {
-			JSValue *received = [JSValue valueWithNewObjectInContext:context];
-			received[@"type"] = @"message";
-			received[@"data"] = [SGClone deserialize:data inContext:context
-					ports:nil];
-			return received;
-		});
+	@synchronized ([SGBroadcast class]) {
+		SGChannel *sender = _channels[number];
+		if (!sender)
+			return;
+		id data = [SGClone serialize:message natives:_scriptNatives ports:nil];
+		if (!data)
+			return;
+		for (SGChannel *channel in openChannels) {
+			if (channel == sender || ![channel.name isEqualToString:sender.name])
+				continue;
+			channel.owner->_deliver(channel.receive, ^id(JSContext *context) {
+				JSValue *received = [JSValue valueWithNewObjectInContext:context];
+				received[@"type"] = @"message";
+				received[@"data"] = [SGClone deserialize:data inContext:context
+						ports:nil];
+				return received;
+			});
+		}
 	}
 }
 
@@ -184,66 +192,72 @@ static BOOL isLockFree(NSString *name, BOOL isExclusive, NSArray *ahead) {
 
 // Lets go of the script's locks and requests:
 - (void)stop {
-	NSPredicate *others = [NSPredicate predicateWithBlock:
-			^BOOL(SGLockRequest *request, NSDictionary *bindings) {
-		return request.client != self->_client;
-	}];
-	[heldLocks filterUsingPredicate:others];
-	[waitingLocks filterUsingPredicate:others];
-	[_receivers removeAllObjects];
-	[_granted removeAllObjects];
-	[SGLocks grant];
+	@synchronized ([SGLocks class]) {
+		NSPredicate *others = [NSPredicate predicateWithBlock:
+				^BOOL(SGLockRequest *request, NSDictionary *bindings) {
+			return request.client != self->_client;
+		}];
+		[heldLocks filterUsingPredicate:others];
+		[waitingLocks filterUsingPredicate:others];
+		[_receivers removeAllObjects];
+		[_granted removeAllObjects];
+		[SGLocks grant];
+	}
 }
 
 - (NSArray *)request:(NSString *)name exclusive:(BOOL)exclusive
 		ifAvailable:(BOOL)ifAvailable steal:(BOOL)steal
 		receive:(JSValue *)receive {
-	SGLockRequest *request = [[SGLockRequest alloc] init];
-	request.number = nextLockRequest++;
-	request.name = name;
-	request.isExclusive = exclusive;
-	request.owner = self;
-	request.client = _client;
-	if (steal) {
-		for (SGLockRequest *held in [heldLocks copy]) {
-			if ([held.name isEqualToString:name]) {
-				[heldLocks removeObject:held];
-				[held.owner hear:@"stolen" number:held.number];
+	@synchronized ([SGLocks class]) {
+		SGLockRequest *request = [[SGLockRequest alloc] init];
+		request.number = nextLockRequest++;
+		request.name = name;
+		request.isExclusive = exclusive;
+		request.owner = self;
+		request.client = _client;
+		if (steal) {
+			for (SGLockRequest *held in [heldLocks copy]) {
+				if ([held.name isEqualToString:name]) {
+					[heldLocks removeObject:held];
+					[held.owner hear:@"stolen" number:held.number];
+				}
 			}
 		}
+		// One that steals the lock gets it ahead of those waiting:
+		NSString *state;
+		if (steal || isLockFree(name, exclusive, waitingLocks)) {
+			[heldLocks addObject:request];
+			state = @"granted";
+		} else if (ifAvailable) {
+			state = @"unavailable";
+		} else {
+			[waitingLocks addObject:request];
+			state = @"waiting";
+		}
+		NSNumber *number = @(request.number);
+		if (![state isEqualToString:@"unavailable"]) {
+			_receivers[number] = receive;
+			if ([state isEqualToString:@"granted"])
+				[_granted addObject:number];
+		}
+		return @[number, state];
 	}
-	// One that steals the lock gets it ahead of those waiting:
-	NSString *state;
-	if (steal || isLockFree(name, exclusive, waitingLocks)) {
-		[heldLocks addObject:request];
-		state = @"granted";
-	} else if (ifAvailable) {
-		state = @"unavailable";
-	} else {
-		[waitingLocks addObject:request];
-		state = @"waiting";
-	}
-	NSNumber *number = @(request.number);
-	if (![state isEqualToString:@"unavailable"]) {
-		_receivers[number] = receive;
-		if ([state isEqualToString:@"granted"])
-			[_granted addObject:number];
-	}
-	return @[number, state];
 }
 
 // Once the request's callback is done, or its signal aborted: the lock goes
 // to the next request for it.
 - (void)release:(NSNumber *)number {
-	[_receivers removeObjectForKey:number];
-	[_granted removeObject:number];
-	NSPredicate *others = [NSPredicate predicateWithBlock:
-			^BOOL(SGLockRequest *request, NSDictionary *bindings) {
-		return request.number != number.unsignedIntegerValue;
-	}];
-	[heldLocks filterUsingPredicate:others];
-	[waitingLocks filterUsingPredicate:others];
-	[SGLocks grant];
+	@synchronized ([SGLocks class]) {
+		[_receivers removeObjectForKey:number];
+		[_granted removeObject:number];
+		NSPredicate *others = [NSPredicate predicateWithBlock:
+				^BOOL(SGLockRequest *request, NSDictionary *bindings) {
+			return request.number != number.unsignedIntegerValue;
+		}];
+		[heldLocks filterUsingPredicate:others];
+		[waitingLocks filterUsingPredicate:others];
+		[SGLocks grant];
+	}
 }
 
 // Grants the requests waiting that can be, in their order:
@@ -263,27 +277,31 @@ static BOOL isLockFree(NSString *name, BOOL isExclusive, NSArray *ahead) {
 
 // What a request hears, on its script's next turn:
 - (void)hear:(NSString *)state number:(NSUInteger)number {
-	JSValue *receive = _receivers[@(number)];
-	if (receive) {
-		[_granted addObject:@(number)];
-		_deliver(receive, SGValue(state));
+	@synchronized ([SGLocks class]) {
+		JSValue *receive = _receivers[@(number)];
+		if (receive) {
+			[_granted addObject:@(number)];
+			_deliver(receive, SGValue(state));
+		}
 	}
 }
 
 + (NSDictionary *)query {
-	NSArray *(^list)(NSArray *) = ^NSArray *(NSArray *requests) {
-		NSMutableArray *infos = [NSMutableArray array];
-		for (SGLockRequest *request in requests) {
-			[infos addObject:@{
-				@"name": request.name,
-				@"mode": request.isExclusive ? @"exclusive" : @"shared",
-				@"clientId": [NSString stringWithFormat:@"%lu",
-						(unsigned long)request.client]
-			}];
-		}
-		return infos;
-	};
-	return @{ @"held": list(heldLocks), @"pending": list(waitingLocks) };
+	@synchronized ([SGLocks class]) {
+		NSArray *(^list)(NSArray *) = ^NSArray *(NSArray *requests) {
+			NSMutableArray *infos = [NSMutableArray array];
+			for (SGLockRequest *request in requests) {
+				[infos addObject:@{
+					@"name": request.name,
+					@"mode": request.isExclusive ? @"exclusive" : @"shared",
+					@"clientId": [NSString stringWithFormat:@"%lu",
+							(unsigned long)request.client]
+				}];
+			}
+			return infos;
+		};
+		return @{ @"held": list(heldLocks), @"pending": list(waitingLocks) };
+	}
 }
 
 @end

@@ -37,6 +37,7 @@
 		dispatch_once(&once, ^{
 			dispatch_async(dispatch_get_main_queue(), ^{
 				[SGWindowController addMenuItem];
+				[SGWindowController runInitScripts];
 			});
 		});
 	}
@@ -58,6 +59,13 @@
 
 - (NSImage *)toolBarIcon {
 	return _icon;
+}
+
+// The scripts' overlays, over the layer, in its coordinates:
+- (void)drawForegroundForLayer:(GSLayer *)layer options:(NSDictionary *)options {
+	double scale = [options[@"Scale"] doubleValue] ?: 1;
+	[[SGRuntime sharedRuntime] drawOverlaysInContext:
+			NSGraphicsContext.currentContext.CGContext scale:scale];
 }
 
 // Paths show as outlines while scripts draw, without their nodes and

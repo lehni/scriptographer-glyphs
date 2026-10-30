@@ -33,6 +33,21 @@
 		_keysByObject = [NSMapTable weakToStrongObjectsMapTable];
 		_objectsByKey = [NSMapTable strongToWeakObjectsMapTable];
 		_nextKey = 1;
+		// The scripts hear when Glyphs comes to the front, leaves it, and
+		// quits:
+		NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+		NSDictionary *handlers = @{
+			NSApplicationDidBecomeActiveNotification: @"onAppActivate",
+			NSApplicationDidResignActiveNotification: @"onAppDeactivate",
+			NSApplicationWillTerminateNotification: @"onShutdown"
+		};
+		for (NSString *notification in handlers) {
+			__weak SGRuntime *weakSelf = self;
+			[center addObserverForName:notification object:nil queue:nil
+					usingBlock:^(NSNotification *note) {
+				[weakSelf callHandler:handlers[notification]];
+			}];
+		}
 	}
 	return self;
 }
@@ -179,6 +194,15 @@
 #pragma mark - Scripts
 
 - (BOOL)runScriptAtURL:(NSURL *)url {
+	[self stopScript:_scripts[url.path] notify:YES];
+	for (SGScript *other in _scripts.allValues) {
+		if (other != _toolScript && ![other keepsAlive])
+			[self stopScript:other notify:YES];
+	}
+	return [self startScriptAtURL:url];
+}
+
+- (BOOL)startScriptAtURL:(NSURL *)url {
 	NSError *error = nil;
 	NSString *source = [NSString stringWithContentsOfURL:url
 			encoding:NSUTF8StringEncoding error:&error];
@@ -186,7 +210,6 @@
 		[self print:error.localizedDescription];
 		return NO;
 	}
-	[self stopScript:_scripts[url.path]];
 	SGScript *script = [[SGScript alloc] initWithURL:url];
 	_scripts[url.path] = script;
 	[script execute:source];
@@ -197,8 +220,15 @@
 }
 
 - (void)stopScript:(SGScript *)script {
+	[self stopScript:script notify:NO];
+}
+
+// With `notify`, a script that's stopped hears it first, `onStop`:
+- (void)stopScript:(SGScript *)script notify:(BOOL)notify {
 	if (!script)
 		return;
+	if (notify)
+		[script callHandler:@"onStop"];
 	[script stop];
 	if (script == _console)
 		_console = nil;
@@ -212,8 +242,31 @@
 
 - (void)stopAllScripts {
 	for (SGScript *script in _scripts.allValues)
-		[self stopScript:script];
-	[self stopScript:_console];
+		[self stopScript:script notify:YES];
+	[self stopScript:_console notify:YES];
+}
+
+- (void)callHandler:(NSString *)name {
+	for (SGScript *script in _scripts.allValues)
+		[script callHandler:name];
+	[_console callHandler:name];
+}
+
+- (void)runInitScriptsIn:(NSArray<NSURL *> *)folders {
+	NSMutableArray *started = [NSMutableArray array];
+	for (NSURL *folder in folders) {
+		NSDirectoryEnumerator *files = [NSFileManager.defaultManager
+				enumeratorAtURL:folder includingPropertiesForKeys:nil
+				options:NSDirectoryEnumerationSkipsHiddenFiles errorHandler:nil];
+		for (NSURL *url in files) {
+			if ([url.lastPathComponent hasPrefix:@"__init__"]
+					&& [@[@"js", @"pjs"] containsObject:url.pathExtension]
+					&& [self startScriptAtURL:url])
+				[started addObject:url];
+		}
+	}
+	for (NSURL *url in started)
+		[_scripts[url.path] callHandler:@"onStartup"];
 }
 
 - (BOOL)isScriptRunningAtURL:(NSURL *)url {
@@ -236,6 +289,21 @@
 		if (_stateHandler)
 			_stateHandler();
 	}
+}
+
+#pragma mark - Overlays
+
+- (void)drawOverlaysInContext:(CGContextRef)context scale:(double)scale {
+	for (SGScript *script in _scripts.allValues)
+		[script drawOverlayInContext:context scale:scale];
+	[_console drawOverlayInContext:context scale:scale];
+}
+
+- (void)redrawView {
+	GSDocument *document = (GSDocument *)
+			[[NSDocumentController sharedDocumentController] currentDocument];
+	if ([document isKindOfClass:[GSDocument class]])
+		[document.windowController.activeEditViewController redraw];
 }
 
 #pragma mark - Events

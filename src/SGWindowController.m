@@ -75,6 +75,12 @@ static const NSUInteger maxDepth = 8;
 	}
 }
 
++ (void)runInitScripts {
+	SGWindowController *controller = [self sharedController];
+	[[SGRuntime sharedRuntime] runInitScriptsIn:
+			[controller->_folders valueForKey:@"url"]];
+}
+
 + (void)showScriptographer:(id)sender {
 	[[self sharedController] showWindow:sender];
 }
@@ -424,7 +430,15 @@ static const NSUInteger maxDepth = 8;
 			[NSURL URLWithString:@"https://paperjs.org/reference/"]];
 }
 
+// The tool script's options, its `onEditOptions`, as a double-click on its
+// tool button opens them in VectorCraft:
+- (void)editToolOptions:(id)sender {
+	[[SGRuntime sharedRuntime].toolScript callHandler:@"onEditOptions"];
+}
+
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
+	if (item.action == @selector(editToolOptions:))
+		return [SGRuntime sharedRuntime].toolScript != nil;
 	if (item.action == @selector(removeFolder:))
 		return [self isAddedFolder:[self selectedItem]];
 	return YES;
@@ -543,6 +557,9 @@ static const NSUInteger maxDepth = 8;
 	[menu addItemWithTitle:@"Add Folder…" action:@selector(addFolder:)
 			keyEquivalent:@""].target = self;
 	[menu addItemWithTitle:@"Remove Folder" action:@selector(removeFolder:)
+			keyEquivalent:@""].target = self;
+	[menu addItem:[NSMenuItem separatorItem]];
+	[menu addItemWithTitle:@"Tool Options…" action:@selector(editToolOptions:)
 			keyEquivalent:@""].target = self;
 	[menu addItem:[NSMenuItem separatorItem]];
 	[menu addItemWithTitle:@"Paper.js Reference"

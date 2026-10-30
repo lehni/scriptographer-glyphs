@@ -37,6 +37,11 @@ void SGThrowError(NSString *message) {
 			inContext:context];
 }
 
+void SGThrowErrorOfClass(NSString *name, NSString *message) {
+	JSContext *context = [JSContext currentContext];
+	context.exception = [context[name] constructWithArguments:@[message]];
+}
+
 void SGThrowDOMException(NSString *name, NSString *message) {
 	JSContext *context = [JSContext currentContext];
 	context.exception = [context[@"DOMException"]

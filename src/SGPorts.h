@@ -31,6 +31,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSArray *)messageOf:(JSValue *)value ports:(JSValue *)ports
 		numbers:(JSValue *)numbers buffers:(JSValue *)buffers;
 
+// The port of `number`, which leaves the script, to move to another one, as
+// a SharedWorker's does: nil when it has none of that number.
+- (nullable id)takePort:(NSNumber *)number;
+
+// A port that moved here, as a MessagePort of the script:
+- (JSValue *)adoptPort:(id)port;
+
 // A message made again here: its value with the ports it brought, which the
 // script numbers as its own.
 - (JSValue *)receive:(NSArray *)message inContext:(JSContext *)context

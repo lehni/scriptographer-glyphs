@@ -78,24 +78,44 @@
 }
 
 - (void)stop {
-	for (NSNumber *number in _ends.allKeys)
-		[self close:number];
+	@synchronized ([SGPorts class]) {
+		for (NSNumber *number in _ends.allKeys)
+			[self close:number];
+	}
 }
 
 - (NSNumber *)adopt:(SGPortEnd *)end {
-	NSNumber *number = @(_nextPort++);
-	end.owner = self;
-	end.receive = nil;
-	_ends[number] = end;
-	return number;
+	@synchronized ([SGPorts class]) {
+		NSNumber *number = @(_nextPort++);
+		end.owner = self;
+		end.receive = nil;
+		_ends[number] = end;
+		return number;
+	}
 }
 
 - (NSArray *)channel {
-	SGPortEnd *first = [[SGPortEnd alloc] init];
-	SGPortEnd *second = [[SGPortEnd alloc] init];
-	first.peer = second;
-	second.peer = first;
-	return @[[self adopt:first], [self adopt:second]];
+	@synchronized ([SGPorts class]) {
+		SGPortEnd *first = [[SGPortEnd alloc] init];
+		SGPortEnd *second = [[SGPortEnd alloc] init];
+		first.peer = second;
+		second.peer = first;
+		return @[[self adopt:first], [self adopt:second]];
+	}
+}
+
+- (id)takePort:(NSNumber *)number {
+	@synchronized ([SGPorts class]) {
+		SGPortEnd *end = _ends[number];
+		[_ends removeObjectForKey:number];
+		end.owner = nil;
+		return end;
+	}
+}
+
+- (JSValue *)adoptPort:(id)port {
+	return [_scriptNatives invokeMethod:@"makePort"
+			withArguments:@[[self adopt:port]]];
 }
 
 - (NSArray *)messageOf:(JSValue *)value ports:(JSValue *)ports
@@ -140,45 +160,53 @@
 // A port whose other port is gone takes nothing, as in browsers:
 - (void)post:(JSValue *)value from:(NSNumber *)number ports:(JSValue *)ports
 		numbers:(JSValue *)numbers buffers:(JSValue *)buffers {
-	SGPortEnd *end = _ends[number];
-	NSArray *message = [self messageOf:value ports:ports numbers:numbers
-			buffers:buffers];
-	SGPortEnd *peer = end.peer;
-	if (!message || !peer)
-		return;
-	[peer.queue addObject:message];
-	[peer.owner flush:peer];
+	@synchronized ([SGPorts class]) {
+		SGPortEnd *end = _ends[number];
+		NSArray *message = [self messageOf:value ports:ports numbers:numbers
+				buffers:buffers];
+		SGPortEnd *peer = end.peer;
+		if (!message || !peer)
+			return;
+		[peer.queue addObject:message];
+		[peer.owner flush:peer];
+	}
 }
 
 - (void)start:(NSNumber *)number receive:(JSValue *)receive {
-	SGPortEnd *end = _ends[number];
-	end.receive = receive;
-	[self flush:end];
+	@synchronized ([SGPorts class]) {
+		SGPortEnd *end = _ends[number];
+		end.receive = receive;
+		[self flush:end];
+	}
 }
 
 - (void)close:(NSNumber *)number {
-	SGPortEnd *end = _ends[number];
-	[_ends removeObjectForKey:number];
-	end.peer.peer = nil;
-	end.peer = nil;
+	@synchronized ([SGPorts class]) {
+		SGPortEnd *end = _ends[number];
+		[_ends removeObjectForKey:number];
+		end.peer.peer = nil;
+		end.peer = nil;
+	}
 }
 
 // Hands the port's messages to its script on its next turn, once started:
 - (void)flush:(SGPortEnd *)end {
-	if (!end.receive || !end.queue.count)
-		return;
-	while (end.queue.count) {
-		NSArray *message = end.queue.firstObject;
-		[end.queue removeObjectAtIndex:0];
-		_deliver(end.receive, ^id(JSContext *context) {
-			NSArray *ports = nil;
-			JSValue *received = [JSValue valueWithNewObjectInContext:context];
-			received[@"type"] = @"message";
-			received[@"data"] = [self receive:message inContext:context
-					ports:&ports];
-			received[@"ports"] = ports;
-			return received;
-		});
+	@synchronized ([SGPorts class]) {
+		if (!end.receive || !end.queue.count)
+			return;
+		while (end.queue.count) {
+			NSArray *message = end.queue.firstObject;
+			[end.queue removeObjectAtIndex:0];
+			_deliver(end.receive, ^id(JSContext *context) {
+				NSArray *ports = nil;
+				JSValue *received = [JSValue valueWithNewObjectInContext:context];
+				received[@"type"] = @"message";
+				received[@"data"] = [self receive:message inContext:context
+						ports:&ports];
+				received[@"ports"] = ports;
+				return received;
+			});
+		}
 	}
 }
 

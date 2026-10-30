@@ -65,57 +65,65 @@ static const NSUInteger most = 16 * 1024 * 1024;
 }
 
 - (void)stop {
-	for (NSNumber *number in _streams.allKeys)
-		[self close:number];
-	[_session invalidateAndCancel];
-	_session = nil;
+	@synchronized (self) {
+		for (NSNumber *number in _streams.allKeys)
+			[self close:number];
+		[_session invalidateAndCancel];
+		_session = nil;
+	}
 }
 
 - (NSNumber *)open:(NSString *)url receive:(JSValue *)receive {
-	NSNumber *number = @(_nextStream++);
-	SGEventStream *stream = [[SGEventStream alloc] init];
-	stream.url = url;
-	stream.receive = receive;
-	stream.reconnectionTime = reconnectionTime;
-	stream.lastEventId = @"";
-	_streams[number] = stream;
-	[self connect:stream];
-	return number;
+	@synchronized (self) {
+		NSNumber *number = @(_nextStream++);
+		SGEventStream *stream = [[SGEventStream alloc] init];
+		stream.url = url;
+		stream.receive = receive;
+		stream.reconnectionTime = reconnectionTime;
+		stream.lastEventId = @"";
+		_streams[number] = stream;
+		[self connect:stream];
+		return number;
+	}
 }
 
 - (void)close:(NSNumber *)number {
-	SGEventStream *stream = _streams[number];
-	[_streams removeObjectForKey:number];
-	[stream.timer invalidate];
-	[stream.task cancel];
+	@synchronized (self) {
+		SGEventStream *stream = _streams[number];
+		[_streams removeObjectForKey:number];
+		[stream.timer invalidate];
+		[stream.task cancel];
+	}
 }
 
 - (void)connect:(SGEventStream *)stream {
-	if (![stream.url hasPrefix:@"http://"] && ![stream.url hasPrefix:@"https://"]) {
-		[self fail:stream reason:[NSString stringWithFormat:
-				@"only http: and https: URLs, not '%@'", stream.url]];
-		return;
+	@synchronized (self) {
+		if (![stream.url hasPrefix:@"http://"] && ![stream.url hasPrefix:@"https://"]) {
+			[self fail:stream reason:[NSString stringWithFormat:
+					@"only http: and https: URLs, not '%@'", stream.url]];
+			return;
+		}
+		if (!_session) {
+			_session = [NSURLSession sessionWithConfiguration:
+					NSURLSessionConfiguration.ephemeralSessionConfiguration
+					delegate:self delegateQueue:NSOperationQueue.mainQueue];
+		}
+		NSMutableURLRequest *request = [NSMutableURLRequest
+				requestWithURL:[NSURL URLWithString:stream.url]];
+		[request setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
+		[request setValue:@"no-store" forHTTPHeaderField:@"Cache-Control"];
+		if (stream.lastEventId.length) {
+			[request setValue:stream.lastEventId
+					forHTTPHeaderField:@"Last-Event-ID"];
+		}
+		request.timeoutInterval = 24 * 60 * 60;
+		// A new stream starts with a new line and event:
+		stream.line = [NSMutableData data];
+		stream.isAfterCR = stream.hasStarted = NO;
+		stream.type = stream.data = stream.eventId = @"";
+		stream.task = [_session dataTaskWithRequest:request];
+		[stream.task resume];
 	}
-	if (!_session) {
-		_session = [NSURLSession sessionWithConfiguration:
-				NSURLSessionConfiguration.ephemeralSessionConfiguration
-				delegate:self delegateQueue:NSOperationQueue.mainQueue];
-	}
-	NSMutableURLRequest *request = [NSMutableURLRequest
-			requestWithURL:[NSURL URLWithString:stream.url]];
-	[request setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
-	[request setValue:@"no-store" forHTTPHeaderField:@"Cache-Control"];
-	if (stream.lastEventId.length) {
-		[request setValue:stream.lastEventId
-				forHTTPHeaderField:@"Last-Event-ID"];
-	}
-	request.timeoutInterval = 24 * 60 * 60;
-	// A new stream starts with a new line and event:
-	stream.line = [NSMutableData data];
-	stream.isAfterCR = stream.hasStarted = NO;
-	stream.type = stream.data = stream.eventId = @"";
-	stream.task = [_session dataTaskWithRequest:request];
-	[stream.task resume];
 }
 
 - (SGEventStream *)streamOf:(NSURLSessionTask *)task {
@@ -219,51 +227,57 @@ static const NSUInteger most = 16 * 1024 * 1024;
 		didReceiveResponse:(NSURLResponse *)response
 		completionHandler:(void (^)(NSURLSessionResponseDisposition))
 			completionHandler {
-	SGEventStream *stream = [self streamOf:task];
-	NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
-	NSString *type = [[http.allHeaderFields[@"Content-Type"] ?: @""
-			componentsSeparatedByString:@";"][0]
-			stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
-	if (!stream) {
-		completionHandler(NSURLSessionResponseCancel);
-	} else if (http.statusCode != 200) {
-		completionHandler(NSURLSessionResponseCancel);
-		[self fail:stream reason:[NSString stringWithFormat:
-				@"the server answered %ld", (long)http.statusCode]];
-	} else if (![type isEqualToString:@"text/event-stream"]) {
-		completionHandler(NSURLSessionResponseCancel);
-		[self fail:stream reason:[NSString stringWithFormat:
-				@"not an event stream, but '%@'", type]];
-	} else {
-		completionHandler(NSURLSessionResponseAllow);
-		_deliver(stream.receive, SGValue(@{ @"state": @"open",
-				@"url": response.URL.absoluteString ?: stream.url }));
+	@synchronized (self) {
+		SGEventStream *stream = [self streamOf:task];
+		NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+		NSString *type = [[http.allHeaderFields[@"Content-Type"] ?: @""
+				componentsSeparatedByString:@";"][0]
+				stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+		if (!stream) {
+			completionHandler(NSURLSessionResponseCancel);
+		} else if (http.statusCode != 200) {
+			completionHandler(NSURLSessionResponseCancel);
+			[self fail:stream reason:[NSString stringWithFormat:
+					@"the server answered %ld", (long)http.statusCode]];
+		} else if (![type isEqualToString:@"text/event-stream"]) {
+			completionHandler(NSURLSessionResponseCancel);
+			[self fail:stream reason:[NSString stringWithFormat:
+					@"not an event stream, but '%@'", type]];
+		} else {
+			completionHandler(NSURLSessionResponseAllow);
+			_deliver(stream.receive, SGValue(@{ @"state": @"open",
+					@"url": response.URL.absoluteString ?: stream.url }));
+		}
 	}
 }
 
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task
 		didReceiveData:(NSData *)data {
-	SGEventStream *stream = [self streamOf:task];
-	if (stream)
-		[self read:data of:stream];
+	@synchronized (self) {
+		SGEventStream *stream = [self streamOf:task];
+		if (stream)
+			[self read:data of:stream];
+	}
 }
 
 // The stream ended or broke: it connects again after the reconnection time.
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task
 		didCompleteWithError:(NSError *)error {
-	SGEventStream *stream = [self streamOf:task];
-	if (!stream || error.code == NSURLErrorCancelled)
-		return;
-	stream.task = nil;
-	_deliver(stream.receive, SGValue(@{ @"state": @"reconnecting" }));
-	__weak SGEventSources *weakSelf = self;
-	stream.timer = [NSTimer scheduledTimerWithTimeInterval:
-			stream.reconnectionTime / 1000.0 repeats:NO
-			block:^(NSTimer *timer) {
-		SGEventSources *sources = weakSelf;
-		if (sources && [sources->_streams allKeysForObject:stream].count)
-			[sources connect:stream];
-	}];
+	@synchronized (self) {
+		SGEventStream *stream = [self streamOf:task];
+		if (!stream || error.code == NSURLErrorCancelled)
+			return;
+		stream.task = nil;
+		_deliver(stream.receive, SGValue(@{ @"state": @"reconnecting" }));
+		__weak SGEventSources *weakSelf = self;
+		stream.timer = [NSTimer scheduledTimerWithTimeInterval:
+				stream.reconnectionTime / 1000.0 repeats:NO
+				block:^(NSTimer *timer) {
+			SGEventSources *sources = weakSelf;
+			if (sources && [sources->_streams allKeysForObject:stream].count)
+				[sources connect:stream];
+		}];
+	}
 }
 
 @end

@@ -119,10 +119,12 @@ int main(void) {
 			"print(performance.now() >= 0);"
 			"localStorage.setItem('a', '1');"
 			"sessionStorage.setItem('b', '2');"
-			"try { new OffscreenCanvas(1, 1) } catch (e) { print(e.message) }"];
+			"var canvas = new OffscreenCanvas(4, 4), ctx = canvas.getContext('2d');"
+			"ctx.fillStyle = 'rgb(255 0 0 / 50%)'; ctx.fillRect(1, 1, 2, 2);"
+			"print(ctx.fillStyle, ctx.getImageData(1, 1, 1, 1).data.join());"];
 		CHECK([output isEqualToArray:(@[
 			@"é", @"�A", @"4", @"true",
-			@"OffscreenCanvas isn't supported in Glyphs yet."
+			@"rgba(255, 0, 0, 0.5) 255,0,0,128"
 		])]);
 		[output removeAllObjects];
 
@@ -310,6 +312,72 @@ int main(void) {
 		CHECK(![script isRunning]);
 		[output removeAllObjects];
 		[script stop];
+
+		// Workers answer messages on their threads, and keep the script
+		// running until they're terminated; their errors reach the Worker:
+		[@"onmessage = function(event) { postMessage(event.data * 2) }"
+				writeToFile:[folder stringByAppendingPathComponent:@"double.js"]
+				atomically:YES encoding:NSUTF8StringEncoding error:nil];
+		[@"onconnect = function(event) {"
+				"  event.ports[0].postMessage('hello ' + self.name)"
+				"}"
+				writeToFile:[folder stringByAppendingPathComponent:@"greet.js"]
+				atomically:YES encoding:NSUTF8StringEncoding error:nil];
+		[@"throw new Error('broken')"
+				writeToFile:[folder stringByAppendingPathComponent:@"broken.js"]
+				atomically:YES encoding:NSUTF8StringEncoding error:nil];
+		script = [[SGScript alloc] initWithURL:url];
+		[script execute:@
+			"var worker = new Worker('double.js');"
+			"worker.onmessage = function(event) {"
+			"  print('doubled', event.data); worker.terminate()"
+			"};"
+			"worker.postMessage(21);"
+			"new SharedWorker('greet.js', 'all').port.onmessage = function(e) {"
+			"  print(e.data)"
+			"};"
+			"new Worker('broken.js').onerror = function(event) {"
+			"  print('error', event.message); event.preventDefault()"
+			"}"];
+		for (int i = 0; i < 50 && output.count < 3; i++)
+			runLoop(0.1);
+		CHECK(([[NSSet setWithArray:output] isEqualToSet:[NSSet setWithArray:@[
+			@"doubled 42", @"hello all", @"error Error: broken"
+		]]]));
+		[output removeAllObjects];
+		[script stop];
+
+		// The lifecycle: preferences come back, as Paper.js objects; a script
+		// that keeps alive goes on when another runs, others hear `onStop`:
+		SGRuntime *runtime = [SGRuntime sharedRuntime];
+		NSString *(^file)(NSString *, NSString *) = ^NSString *(NSString *name,
+				NSString *source) {
+			NSString *path = [folder stringByAppendingPathComponent:name];
+			[source writeToFile:path atomically:YES encoding:NSUTF8StringEncoding
+					error:nil];
+			return path;
+		};
+		NSURL *kept = [NSURL fileURLWithPath:file(@"kept.js",
+				@"script.keepAlive = true; setInterval(function() {}, 1000);"
+				"function onStop() { print('kept stops') }")];
+		NSURL *other = [NSURL fileURLWithPath:file(@"other.js",
+				@"setInterval(function() {}, 1000);"
+				"function onStop() { print('other stops') }")];
+		NSURL *remember = [NSURL fileURLWithPath:file(@"remember.js",
+				@"print(script.file.name, script.preferences.point);"
+				"script.preferences.point = new Point(3, 4)")];
+		[runtime runScriptAtURL:kept];
+		[runtime runScriptAtURL:other];
+		[runtime runScriptAtURL:remember];
+		[runtime runScriptAtURL:remember];
+		CHECK([output isEqualToArray:(@[@"other stops", @"remember.js undefined",
+				@"remember.js { x: 3, y: 4 }"])]);
+		CHECK([runtime isScriptRunningAtURL:kept]);
+		CHECK(![runtime isScriptRunningAtURL:other]);
+		[output removeAllObjects];
+		[runtime stopAllScripts];
+		CHECK([output isEqualToArray:(@[@"kept stops"])]);
+		[output removeAllObjects];
 
 		// localStorage stays with the script, sessionStorage doesn't:
 		SGScript *again = [[SGScript alloc] initWithURL:url];

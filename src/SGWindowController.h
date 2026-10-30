@@ -14,6 +14,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SGWindowController : NSWindowController
 
 + (void)addMenuItem;
+// Runs the `__init__` scripts of the folders, as Glyphs starts:
++ (void)runInitScripts;
 + (instancetype)sharedController;
 
 @end
