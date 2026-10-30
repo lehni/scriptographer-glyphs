@@ -128,6 +128,32 @@ int main(void) {
 		])]);
 		[output removeAllObjects];
 
+		// Controls other than spaces take the width of the font's .notdef,
+		// and draw nothing:
+		[script execute:@
+			"var ctx = new OffscreenCanvas(100, 100).getContext('2d');"
+			"ctx.font = '50px sans-serif';"
+			"ctx.fillText('\\x0b', 20, 70);"
+			"print(ctx.measureText('\\x0b').width > 0,"
+			"  ctx.getImageData(0, 0, 100, 100).data.some(v => v))"];
+		CHECK([output isEqualToArray:(@[@"true false"])]);
+		[output removeAllObjects];
+
+		// Clusters where the direction changes are where their glyphs are:
+		// in right-to-left text, the leading '-' is at the right, the digits
+		// left to right in the middle:
+		[script execute:@
+			"var ctx = new OffscreenCanvas(100, 100).getContext('2d');"
+			"ctx.font = '50px sans-serif';"
+			"ctx.direction = 'rtl'; ctx.textAlign = 'center';"
+			"var metrics = ctx.measureText('-0123456789-'),"
+			"  dash = metrics.getSelectionRects(0, 1)[0],"
+			"  nine = metrics.getSelectionRects(10, 11)[0];"
+			"print(dash.x + dash.width === metrics.width / 2,"
+			"  nine.x + nine.width <= dash.x, metrics.getIndexFromOffset(0))"];
+		CHECK([output isEqualToArray:(@[@"true true 6"])]);
+		[output removeAllObjects];
+
 		// Files, relative to the script's folder, through LocalFile:
 		[script execute:@
 			"var file = new LocalFile('notes.txt');"

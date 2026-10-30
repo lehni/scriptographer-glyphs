@@ -3238,11 +3238,12 @@
     Image: () => Image,
     ImageBitmap: () => ImageBitmap,
     ImageData: () => ImageData,
-    OffscreenCanvas: () => OffscreenCanvas,
+    OffscreenCanvas: () => OffscreenCanvas2,
     OffscreenCanvasRenderingContext2D: () => OffscreenCanvasRenderingContext2D,
     Path2D: () => Path2D,
     TextCluster: () => TextCluster,
     TextMetrics: () => TextMetrics,
+    canvasSurface: () => canvasSurface,
     createImageBitmap: () => createImageBitmap
   });
 
@@ -4320,7 +4321,7 @@
   var getPatternPaint;
   var registry = globalThis.FinalizationRegistry && new FinalizationRegistry(([kind, slot]) => canvas.release(kind, slot));
   var contextTypes = ["2d", "bitmaprenderer", "webgl", "webgl2", "webgpu"];
-  var OffscreenCanvas = class {
+  var OffscreenCanvas2 = class {
     static {
       __name(this, "OffscreenCanvas");
     }
@@ -4409,6 +4410,10 @@
       return bitmap;
     }
   };
+  function canvasSurface(canvas2) {
+    return canvas2 instanceof OffscreenCanvas2 ? getCanvasSurface(canvas2) : void 0;
+  }
+  __name(canvasSurface, "canvasSurface");
   var getContextSurface;
   var OffscreenCanvasRenderingContext2D = class {
     static {
@@ -4909,7 +4914,7 @@
     }
   };
   defineInterfaces(
-    OffscreenCanvas,
+    OffscreenCanvas2,
     OffscreenCanvasRenderingContext2D,
     ImageData,
     Path2D,
@@ -4934,7 +4939,7 @@
   }
   __name(isLoading, "isLoading");
   function getSurface(image) {
-    if (image instanceof OffscreenCanvas) {
+    if (image instanceof OffscreenCanvas2) {
       if (image.width === 0 || image.height === 0) {
         throw new DOMException(
           "Invalid image: a canvas of no size.",
@@ -5810,6 +5815,32 @@ ${stack}` : ""));
     }
   }
   __name(applyEffect, "applyEffect");
+
+  // src/overlay.js
+  var overlay = null;
+  function drawOverlay(project, matrix, width, height, pixelRatio) {
+    if (!project.hasDrawHandlers()) {
+      overlay = null;
+      return null;
+    }
+    width = Math.round(width * pixelRatio);
+    height = Math.round(height * pixelRatio);
+    if (overlay?.width !== width || overlay.height !== height) {
+      overlay = new OffscreenCanvas(width, height);
+    }
+    const ctx = overlay.getContext("2d");
+    ctx.save();
+    try {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      ctx.scale(pixelRatio, pixelRatio);
+      project.draw(ctx, matrix, pixelRatio);
+    } finally {
+      ctx.restore();
+    }
+    return canvasSurface(overlay) ?? ctx.getImageData(0, 0, width, height);
+  }
+  __name(drawOverlay, "drawOverlay");
 
   // src/dom-exception.js
   var constants = [
@@ -9799,7 +9830,8 @@ ${value}\r
     inject(navigator, { storage: new StorageManager() }, { writable: false });
   }
   if (!globalThis.OffscreenCanvas) {
-    inject(globalThis, { ...canvas_exports });
+    const { canvasSurface: canvasSurface2, ...classes } = canvas_exports;
+    inject(globalThis, { ...classes });
   }
   if (!globalThis.location) {
     inject(globalThis, { WorkerLocation });
@@ -9821,6 +9853,7 @@ ${value}\r
   inject(globalThis, { Palette });
   Object.assign(natives, { takePalettes, hasPalettes, handlePaletteEvent });
   Object.assign(natives, { watchEffects, applyEffect });
+  Object.assign(natives, { drawOverlay });
   setupKeys();
   Object.assign(natives, { dispatchKey, hasKeyListeners });
   Object.assign(natives, { getSelectedKeys });

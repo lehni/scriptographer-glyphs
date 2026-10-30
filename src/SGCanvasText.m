@@ -186,6 +186,15 @@ static CTFontRef createFont(SGCSSFont *font, double size) {
 	}
 }
 
+// The width of a run delegate, which it keeps:
+static CGFloat delegateWidth(void *width) {
+	return *(CGFloat *)width;
+}
+
+static void delegateDealloc(void *width) {
+	free(width);
+}
+
 @implementation SGCanvas (Text)
 
 // The text as the context lays it out: controls as spaces, NUL as a
@@ -225,6 +234,26 @@ static CTFontRef createFont(SGCSSFont *font, double size) {
 				(__bridge id)paragraph
 	}];
 	CFRelease(paragraph);
+	// The other controls take the width of the font's .notdef and draw
+	// nothing, as browsers lay them out:
+	for (NSUInteger i = 0; i < clean.length; i++) {
+		unichar c = [clean characterAtIndex:i];
+		if (c >= 0x20 && c != 0x7f)
+			continue;
+		CGGlyph notdef = 0;
+		CGFloat *width = malloc(sizeof(CGFloat));
+		*width = CTFontGetAdvancesForGlyphs(font,
+				kCTFontOrientationHorizontal, &notdef, NULL, 1);
+		CTRunDelegateCallbacks callbacks = {
+			.version = kCTRunDelegateVersion1,
+			.dealloc = delegateDealloc,
+			.getWidth = delegateWidth
+		};
+		CTRunDelegateRef delegate = CTRunDelegateCreate(&callbacks, width);
+		[string addAttribute:(__bridge NSString *)kCTRunDelegateAttributeName
+				value:(__bridge id)delegate range:NSMakeRange(i, 1)];
+		CFRelease(delegate);
+	}
 	if (!hasKerning) {
 		[string addAttribute:(__bridge NSString *)kCTKernAttributeName
 				value:@0 range:NSMakeRange(0, clean.length)];
@@ -381,14 +410,18 @@ static CTFontRef createFont(SGCSSFont *font, double size) {
 	NSMutableData *clusters = [NSMutableData data];
 	NSArray *runs = (__bridge NSArray *)CTLineGetGlyphRuns(line.line);
 	enumerateClusters(line.text, ^(NSString *cluster, NSRange range) {
-		double start = CTLineGetOffsetForStringIndex(line.line,
-				range.location, NULL) + [line spacingBefore:range.location];
-		double end = CTLineGetOffsetForStringIndex(line.line,
-				NSMaxRange(range), NULL) + [line spacingBefore:NSMaxRange(range)];
+		// Where its glyphs are, with the spacing after it; carets would put
+		// the end of a cluster before a change of direction in the next run:
+		CGRect box = [self boxOf:runs range:range];
+		double spacing = [line spacingBefore:NSMaxRange(range)]
+				- [line spacingBefore:range.location];
+		double left = CGRectIsNull(box) ? CTLineGetOffsetForStringIndex(
+				line.line, range.location, NULL) : CGRectGetMinX(box);
 		CGRect bounds = [self inkOf:runs range:range line:line];
 		double values[8] = {
-			range.location, NSMaxRange(range), MIN(start, end) - anchorX,
-			fabs(end - start),
+			range.location, NSMaxRange(range),
+			left + [line spacingBefore:range.location] - anchorX,
+			(CGRectIsNull(box) ? 0 : box.size.width) + spacing,
 			CGRectIsNull(bounds) ? 0 : CGRectGetMinX(bounds) - anchorX,
 			CGRectIsNull(bounds) ? 0 : CGRectGetMaxX(bounds) - anchorX,
 			CGRectIsNull(bounds) ? 0 : CGRectGetMaxY(bounds) - offset,
@@ -422,6 +455,32 @@ static CTFontRef createFont(SGCSSFont *font, double size) {
 		@"ideographicBaseline": @(line.ideographic - offset),
 		@"clusters": list
 	};
+}
+
+// The advances of the glyphs of the runs for the characters in `range`, as
+// one box, in the line's coordinates without the spacing:
+- (CGRect)boxOf:(NSArray *)runs range:(NSRange)range {
+	CGRect box = CGRectNull;
+	for (id object in runs) {
+		CTRunRef run = (__bridge CTRunRef)object;
+		CFIndex count = CTRunGetGlyphCount(run);
+		CGPoint *positions = malloc(count * sizeof(CGPoint));
+		CGSize *advances = malloc(count * sizeof(CGSize));
+		CFIndex *indices = malloc(count * sizeof(CFIndex));
+		CTRunGetPositions(run, CFRangeMake(0, 0), positions);
+		CTRunGetAdvances(run, CFRangeMake(0, 0), advances);
+		CTRunGetStringIndices(run, CFRangeMake(0, 0), indices);
+		for (CFIndex i = 0; i < count; i++) {
+			if (NSLocationInRange(indices[i], range)) {
+				box = CGRectUnion(box, CGRectMake(positions[i].x, 0,
+						advances[i].width, 0));
+			}
+		}
+		free(positions);
+		free(advances);
+		free(indices);
+	}
+	return box;
 }
 
 // The ink of the glyphs of the runs for the characters in `range`, in the
