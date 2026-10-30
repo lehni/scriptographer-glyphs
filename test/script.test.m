@@ -474,6 +474,9 @@ int main(void) {
 				"\ndraw()")];
 		NSURL *invalid = [NSURL fileURLWithPath:file(@"invalid.js",
 				@"var a = 1;\nconsole.log(import)")];
+		// One that fails after it awaited fails as one that didn't:
+		NSURL *late = [NSURL fileURLWithPath:file(@"late.js",
+				@"await null\nthrow new Error('late')")];
 		__block NSUInteger failed = 0;
 		runtime.failureHandler = ^{
 			failed++;
@@ -481,7 +484,8 @@ int main(void) {
 		[runtime runScriptAtURL:broken];
 		[runtime runScriptAtURL:invalid];
 		[runtime evaluate:@"console.log(import)"];
-		CHECK(failed == 3);
+		[runtime runScriptAtURL:late];
+		CHECK(failed == 4);
 		runtime.failureHandler = nil;
 		NSString *at = broken.absoluteString;
 		CHECK(([output isEqualToArray:@[
@@ -490,7 +494,9 @@ int main(void) {
 				"draw@%@:2:14\n@%@:4:5", at, at, at],
 			[NSString stringWithFormat:@"Uncaught SyntaxError: Unexpected "
 				"token (at %@:2:19)", invalid.absoluteString],
-			@"Uncaught SyntaxError: Unexpected token (at Console:1:19)"
+			@"Uncaught SyntaxError: Unexpected token (at Console:1:19)",
+			[NSString stringWithFormat:@"Uncaught Error: late\n@%@:2:16",
+				late.absoluteString]
 		]]));
 		[output removeAllObjects];
 

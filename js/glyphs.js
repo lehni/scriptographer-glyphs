@@ -572,7 +572,10 @@ var Scriptographer = new function() {
                     scope._glyphsProjects[''] = new scope.Project(
                             new scope.Size(1, 1));
                 }
-                executeScript(scope, source, url);
+                // One that awaits fails later, as one that doesn't would:
+                var promise = executeScript(scope, source, url);
+                if (promise)
+                    promise.catch(report);
             });
         },
 
