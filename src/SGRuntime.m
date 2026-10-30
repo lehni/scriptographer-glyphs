@@ -11,6 +11,8 @@
 @implementation SGRuntime {
 	NSMutableDictionary<NSString *, SGScript *> *_scripts;
 	SGScript *_console;
+	// The script that runs its code for the first time:
+	SGScript *_startingScript;
 	// Keys for the layers and paths that scripts see, both ways:
 	NSMapTable<id, NSNumber *> *_keysByObject;
 	NSMapTable<NSNumber *, id> *_objectsByKey;
@@ -213,7 +215,9 @@
 	}
 	SGScript *script = [[SGScript alloc] initWithURL:url];
 	_scripts[url.path] = script;
+	_startingScript = script;
 	[script execute:source];
+	_startingScript = nil;
 	BOOL isRunning = _scripts[url.path] == script;
 	if (isRunning && _stateHandler)
 		_stateHandler();
@@ -280,16 +284,24 @@
 	[_console execute:code];
 }
 
-// Scripts that stopped running go; the last one to define a tool gets the
-// Script tool's events. Only what the browser shows changing tells it.
+// Scripts that stopped running go, those that ran on with a line in the
+// console, as in VectorCraft; the last one to define a tool gets the Script
+// tool's events. Only what the browser shows changing tells it.
 - (void)scriptDidWork:(SGScript *)script {
 	if (script != _console && ![script isRunning]) {
+		if (script != _startingScript && _scripts[script.url.path] == script)
+			[self print:[NSString stringWithFormat:@"%@ stopped", script.name]];
 		[self stopScript:script];
 	} else if ([script hasTool] && script != _toolScript) {
 		_toolScript = script;
 		if (_stateHandler)
 			_stateHandler();
 	}
+}
+
+- (void)scriptDidFail {
+	if (_failureHandler)
+		_failureHandler();
 }
 
 // As browsers ask about a page that hangs:

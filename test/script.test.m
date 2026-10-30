@@ -379,6 +379,53 @@ int main(void) {
 		CHECK([output isEqualToArray:(@[@"kept stops"])]);
 		[output removeAllObjects];
 
+		// Imports: PaperScript from .pjs files, JavaScript from others, each
+		// once; cycles and missing modules throw:
+		file(@"shapes.pjs", @"export var moved = new Point(1, 2) + 3");
+		file(@"count.js", @"export var count = (globalThis.runs = "
+				"(globalThis.runs || 0) + 1)");
+		file(@"sum.js", @"export var sum = new Point(1, 2) + 3");
+		file(@"a.js", @"import { b } from './b.js'; export var a = 1");
+		file(@"b.js", @"import { a } from './a.js'; export var b = 2");
+		[runtime runScriptAtURL:[NSURL fileURLWithPath:file(@"imports.js",
+				@"import { moved } from './shapes.pjs';"
+				"import { count } from './count.js';"
+				"import { count as again } from './count.js';"
+				"import { sum } from './sum.js';"
+				"print(moved, count, again, sum);"
+				"import('./a.js').catch(e => print(e.message));"
+				"import('./missing.js').catch(e => print(e.message))")]];
+		runLoop(0.1);
+		CHECK(([output isEqualToArray:@[
+			@"{ x: 4, y: 5 } 1 1 { x: 1, y: 2 }3",
+			@"import './a.js': it imports itself, through its imports",
+			@"import './missing.js': The file “missing.js” couldn’t be opened "
+				"because there is no such file.",
+			@"imports stopped"
+		]]));
+		[output removeAllObjects];
+
+		// Modules from the web are kept, and come from there when the server
+		// can't be reached:
+		int webPort = serve(@"HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\n"
+				"ETag: \"1\"\r\nContent-Length: 20\r\n\r\nexport var web = 'w'");
+		NSString *web = [NSString stringWithFormat:@"import { web } from "
+				"'http://localhost:%d/web.js'; print(web)", webPort];
+		[runtime runScriptAtURL:[NSURL fileURLWithPath:file(@"web.js", web)]];
+		[runtime runScriptAtURL:[NSURL fileURLWithPath:file(@"web.js", web)]];
+		NSString *imported = [NSString stringWithFormat:
+				@"import http://localhost:%d/web.js", webPort];
+		CHECK(([output isEqualToArray:@[imported, @"w", imported, @"w"]]));
+		[output removeAllObjects];
+
+		// A script that runs on says when it stops on its own, one that's
+		// done at once doesn't:
+		[runtime runScriptAtURL:[NSURL fileURLWithPath:file(@"brief.js",
+				@"setTimeout(function() { print('done') }, 10)")]];
+		runLoop(0.1);
+		CHECK([output isEqualToArray:(@[@"done", @"brief stopped"])]);
+		[output removeAllObjects];
+
 		// A script that hangs is asked about once it worked too long, and
 		// stops when it should:
 		__block NSUInteger asked = 0;
@@ -401,9 +448,15 @@ int main(void) {
 				"\ndraw()")];
 		NSURL *invalid = [NSURL fileURLWithPath:file(@"invalid.js",
 				@"var a = 1;\nconsole.log(import)")];
+		__block NSUInteger failed = 0;
+		runtime.failureHandler = ^{
+			failed++;
+		};
 		[runtime runScriptAtURL:broken];
 		[runtime runScriptAtURL:invalid];
 		[runtime evaluate:@"console.log(import)"];
+		CHECK(failed == 3);
+		runtime.failureHandler = nil;
 		NSString *at = broken.absoluteString;
 		CHECK(([output isEqualToArray:@[
 			[NSString stringWithFormat:@"Uncaught TypeError: undefined is not "

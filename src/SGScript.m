@@ -17,6 +17,7 @@
 #import "SGPorts.h"
 #import "SGCanvas.h"
 #import "SGWorkers.h"
+#import "SGModules.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <dlfcn.h>
@@ -245,6 +246,7 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 			[report callWithArguments:@[exception]];
 		else
 			[SGScript print:exception.toString];
+		[[SGRuntime sharedRuntime] scriptDidFail];
 	};
 	_context[@"self"] = _context.globalObject;
 	_context[@"navigator"] = @{
@@ -331,6 +333,13 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 				return nil;
 			}
 			return [JSValue valueWithJSValueRef:result inContext:context];
+		},
+		@"readModule": ^NSString *(NSString *href) {
+			NSString *reason;
+			NSString *text = SGReadModule([NSURL URLWithString:href], &reason);
+			if (!text)
+				SGThrowError(reason ?: @"it can't be read");
+			return text;
 		},
 		@"random": ^JSValue *(NSUInteger length) {
 			NSMutableData *data = [NSMutableData dataWithLength:length];
@@ -423,6 +432,9 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 	__weak SGScript *weakSelf = self;
 	SGRuntime *runtime = [SGRuntime sharedRuntime];
 	return @{
+		@"didFail": ^{
+			[runtime scriptDidFail];
+		},
 		// Workers have no document:
 		@"getLayer": ^id {
 			SGScript *script = weakSelf;

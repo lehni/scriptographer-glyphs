@@ -6,12 +6,15 @@
 #import "SGConsoleController.h"
 #import "SGRuntime.h"
 
+static const NSUInteger maxLines = 1000;
+
 @interface SGConsoleController () <NSTextViewDelegate>
 @end
 
 @implementation SGConsoleController {
 	NSTextView *_inputView;
 	NSTextView *_logView;
+	NSUInteger _lineCount;
 }
 
 + (void)addMenuItem {
@@ -50,8 +53,13 @@
 	if (self) {
 		[self setupViews];
 		__weak SGConsoleController *weakSelf = self;
-		[SGRuntime sharedRuntime].printHandler = ^(NSString *line) {
+		SGRuntime *runtime = [SGRuntime sharedRuntime];
+		runtime.printHandler = ^(NSString *line) {
 			[weakSelf appendLine:line];
+		};
+		// Errors show, as in VectorCraft:
+		runtime.failureHandler = ^{
+			[weakSelf showWindow:nil];
 		};
 		[panel center];
 		panel.frameAutosaveName = @"Scriptographer Console";
@@ -116,14 +124,24 @@
 		NSFontAttributeName: _logView.font,
 		NSForegroundColorAttributeName: NSColor.textColor
 	};
-	[_logView.textStorage appendAttributedString:
-			[[NSAttributedString alloc] initWithString:
-				[line stringByAppendingString:@"\n"] attributes:attributes]];
+	NSTextStorage *log = _logView.textStorage;
+	[log appendAttributedString:[[NSAttributedString alloc] initWithString:
+			[line stringByAppendingString:@"\n"] attributes:attributes]];
+	// The last lines only, as many as VectorCraft keeps:
+	_lineCount += [line componentsSeparatedByString:@"\n"].count;
+	if (_lineCount > maxLines) {
+		NSString *text = log.string;
+		NSUInteger end = 0;
+		for (; _lineCount > maxLines; _lineCount--)
+			end = NSMaxRange([text lineRangeForRange:NSMakeRange(end, 0)]);
+		[log deleteCharactersInRange:NSMakeRange(0, end)];
+	}
 	[_logView scrollToEndOfDocument:nil];
 }
 
 - (void)clear:(id)sender {
 	_logView.string = @"";
+	_lineCount = 0;
 }
 
 // Return goes to a new line as usual, and runs the line it ends. The text

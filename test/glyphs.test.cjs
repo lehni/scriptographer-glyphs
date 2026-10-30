@@ -14,6 +14,7 @@ function createGlyphs(paths) {
   const layer = { key: 1, paths }
   let nextKey = 100
   const output = []
+  const failures = []
   const natives = {
     getLayer: () => ({
       key: layer.key,
@@ -42,7 +43,8 @@ function createGlyphs(paths) {
       layer.selections = (layer.selections || 0) + 1
     },
     setTimer: () => 0,
-    clearTimer() {}
+    clearTimer() {},
+    didFail: () => failures.push(output.at(-1))
   }
   const scriptographer = {
     print: line => output.push(line),
@@ -51,14 +53,14 @@ function createGlyphs(paths) {
   }
   const context = vm.createContext({ __glyphs: natives, __scriptographer: scriptographer })
   vm.runInContext('var self = globalThis; var navigator = { userAgent: "Scriptographer" };', context)
-  for (const file of ['vendor/paper-hosted.js', 'vendor/scriptographer.js', 'js/glyphs.js']) {
+  for (const file of ['vendor/acorn.js', 'vendor/paper-hosted.js', 'vendor/scriptographer.js', 'js/glyphs.js']) {
     vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), context, { filename: file })
   }
   const Scriptographer = context.Scriptographer
   // Runs scripts with the bundle's executeScript(), as the plugin does:
   const execute = (source, file) =>
     Scriptographer.execute(source, file, scriptographer.executeScript)
-  return { layer, output, natives: scriptographer, Scriptographer, execute }
+  return { layer, output, failures, natives: scriptographer, Scriptographer, execute }
 }
 
 // Values from the VM's realm, as plain values of this one:
@@ -157,10 +159,11 @@ test('removed paths are removed from the layer', () => {
   assert.deepStrictEqual(layer.paths.map(p => p.key), [3])
 })
 
-test('errors are printed with their line', () => {
-  const { output, Scriptographer, execute } = createGlyphs([])
+test('errors are printed, and tell the runtime', () => {
+  const { output, failures, execute } = createGlyphs([])
   execute('undefinedFunction()', 'error.js')
   assert.match(output[0], /undefinedFunction/)
+  assert.deepStrictEqual(failures, [output[0]])
 })
 
 test('closed curved paths are written back in the order of their nodes', () => {

@@ -20,6 +20,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) void (^printHandler)(NSString *line);
 // Called when scripts start or stop:
 @property (nonatomic, copy, nullable) void (^stateHandler)(void);
+// Called when a script's work fails, after its error is printed:
+@property (nonatomic, copy, nullable) void (^failureHandler)(void);
 // The layer of the Script tool while it handles an event, in place of the
 // active layer of the current document:
 @property (nonatomic, weak, nullable) GSLayer *toolLayer;
@@ -67,6 +69,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setSelection:(NSDictionary<NSString *, NSArray<NSNumber *> *> *)selection
 		layerKey:(NSNumber *)layerKey;
 - (void)scriptDidWork:(SGScript *)script;
+- (void)scriptDidFail;
 
 // The edit view draws the scripts' overlays over the layer, and asks for it
 // again when they change:

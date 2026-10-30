@@ -22,6 +22,7 @@
  *   script running while they're set.
  * - `bindView()`, which makes the canvas made last the overlay's, drawing
  *   into Glyphs' edit view.
+ * - `didFail()`, after an error of the work the runtime asked for.
  */
 
 var Scriptographer = new function() {
@@ -501,15 +502,21 @@ var Scriptographer = new function() {
                 bind(takeSnapshot());
             return callback();
         } catch (e) {
-            reportError(e);
+            report(e);
         } finally {
             try {
                 if (scope)
                     commit();
             } catch (e) {
-                reportError(e);
+                report(e);
             }
         }
+    }
+
+    // An error of the work the runtime asked for, which shows the console:
+    function report(error) {
+        reportError(error);
+        natives.didFail();
     }
 
     // The timers of the script, which the runtime gives scripts, not the
@@ -554,7 +561,7 @@ var Scriptographer = new function() {
     return {
         // Runs the script's code, or a line of the console, in its scope,
         // with the bundle's `executeScript()`:
-        execute: function(source, file, executeScript) {
+        execute: function(source, url, executeScript) {
             if (!scope) {
                 scope = new paper.PaperScope();
                 scope._glyphsProjects = {};
@@ -565,7 +572,7 @@ var Scriptographer = new function() {
                     scope._glyphsProjects[''] = new scope.Project(
                             new scope.Size(1, 1));
                 }
-                executeScript(scope, source, file);
+                executeScript(scope, source, url);
             });
         },
 
@@ -607,7 +614,7 @@ var Scriptographer = new function() {
                 scope.project.draw(overlay, new paper.Matrix(matrix),
                         pixelRatio);
             } catch (e) {
-                reportError(e);
+                report(e);
             }
         },
 

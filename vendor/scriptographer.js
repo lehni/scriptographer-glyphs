@@ -7892,6 +7892,62 @@ ${value}\r
   }
   __name(call, "call");
 
+  // src/modules.js
+  var modules = /* @__PURE__ */ new Map();
+  function getOptions3(scope, url, isPaperScript, handlers2) {
+    return {
+      url,
+      load: /* @__PURE__ */ __name((specifier, importer, attributes) => load(scope, specifier, importer, attributes), "load"),
+      evaluate: natives.evaluate,
+      handlers: handlers2,
+      paperFeatures: isPaperScript ? void 0 : { operatorOverloading: false }
+    };
+  }
+  __name(getOptions3, "getOptions");
+  function load(scope, specifier, importer, attributes) {
+    const fail = /* @__PURE__ */ __name((message) => {
+      throw new Error(`import '${specifier}': ${message}`);
+    }, "fail");
+    let url;
+    try {
+      url = new URL(specifier, importer || void 0);
+    } catch {
+      fail("it names no file the script can find");
+    }
+    const type = attributes?.type;
+    if (type != null && type !== "paperscript" && type !== "javascript") {
+      throw new TypeError(
+        `import '${specifier}': '${type}' isn't a type of module`
+      );
+    }
+    const isPaperScript = type ? type === "paperscript" : /\.pjs$/i.test(url.pathname);
+    const key = `${isPaperScript ? "paperscript" : "javascript"} ${url.href}`;
+    if (modules.has(key)) {
+      return modules.get(key) ?? fail("it imports itself, through its imports");
+    }
+    if (/^https?:$/.test(url.protocol)) natives.print(`import ${url.href}`);
+    let source;
+    try {
+      source = natives.readModule(url.href);
+    } catch (err) {
+      fail(err.message);
+    }
+    modules.set(key, null);
+    try {
+      const exports = scope.PaperScript.execute(
+        source,
+        scope,
+        getOptions3(scope, url.href, isPaperScript)
+      );
+      modules.set(key, exports);
+      return exports;
+    } catch (err) {
+      modules.delete(key);
+      throw err;
+    }
+  }
+  __name(load, "load");
+
   // src/script.js
   function setScript(file, directory, preferences) {
     inject(globalThis, {
@@ -7922,13 +7978,12 @@ ${value}\r
     "onEditOptions"
   ];
   var handlers = {};
-  function executeScript(scope, source, url, load) {
-    const exported = scope.PaperScript.execute(source, scope, {
-      url,
-      load,
-      evaluate: natives.evaluate,
-      handlers: handlerNames
-    });
+  function executeScript(scope, source, url) {
+    const exported = scope.PaperScript.execute(
+      source,
+      scope,
+      getOptions3(scope, url, true, handlerNames)
+    );
     if (typeof exported?.then === "function") {
       exported.then(
         (exported2) => Object.assign(handlers, exported2),
@@ -9408,7 +9463,7 @@ ${value}\r
         this.#timer = setTimeout(() => this.#fail("timeout"), this.#timeout);
       }
       const isCurrent = /* @__PURE__ */ __name(() => this.#request === request, "isCurrent");
-      const load = /* @__PURE__ */ __name(async () => {
+      const load2 = /* @__PURE__ */ __name(async () => {
         const response = await fetch(this.#url, {
           method: this.#method,
           headers: this.#headers,
@@ -9454,7 +9509,7 @@ ${value}\r
           fireProgress(this, "loadend", loaded, total);
         }
       }, "load");
-      load().catch(() => {
+      load2().catch(() => {
         if (isCurrent()) this.#fail("error");
       });
     }
