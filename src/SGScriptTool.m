@@ -33,6 +33,7 @@
 				imageWithSymbolConfiguration:[NSImageSymbolConfiguration
 					configurationWithPointSize:17 weight:NSFontWeightRegular]];
 		_icon.template = YES;
+		[self hideNodes];
 		static dispatch_once_t once;
 		dispatch_once(&once, ^{
 			dispatch_async(dispatch_get_main_queue(), ^{
@@ -43,6 +44,20 @@
 		});
 	}
 	return self;
+}
+
+// Paths show as outlines while scripts draw, without their nodes and
+// handles, as in Scriptographer. Glyphs draws them by its `_showNodes`, which
+// it sets from View › Show Nodes, not by asking `showNodes`:
+- (void)hideNodes {
+	[self setValue:@NO forKey:@"showNodes"];
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
+		change:(NSDictionary *)change context:(void *)context {
+	[super observeValueForKeyPath:keyPath ofObject:object change:change
+			context:context];
+	[self hideNodes];
 }
 
 - (NSUInteger)interfaceVersion {
@@ -67,12 +82,6 @@
 	double scale = [options[@"Scale"] doubleValue] ?: 1;
 	[[SGRuntime sharedRuntime] drawOverlaysInContext:
 			NSGraphicsContext.currentContext.CGContext scale:scale];
-}
-
-// Paths show as outlines while scripts draw, without their nodes and
-// handles, as in Scriptographer:
-- (BOOL)showNodes {
-	return NO;
 }
 
 - (NSString *)trigger {
