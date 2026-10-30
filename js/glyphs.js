@@ -588,30 +588,6 @@ var Scriptographer = new function() {
             });
         },
 
-        // The global `script`, as VectorCraft's runtime sets it up: its file
-        // and folder as LocalFiles, `keepAlive`, which it sets to keep
-        // running when another script runs, and `preferences`, as it last
-        // left them, in Paper.js JSON, so they come back as Colors, Points…
-        setScript: function(file, directory, preferences) {
-            self.script = {
-                file: file ? new LocalFile(file) : null,
-                directory: directory ? new LocalFile(directory) : null,
-                keepAlive: false,
-                preferences: preferences
-                        ? paper.Base.importJSON(preferences) : {}
-            };
-        },
-
-        getPreferences: function() {
-            var script = self.script;
-            return script && script.preferences
-                    ? paper.Base.exportJSON(script.preferences) : null;
-        },
-
-        keepsAlive: function() {
-            return !!(self.script && self.script.keepAlive === true);
-        },
-
         // Calls the handler the script exported, if it has it:
         callHandler: function(name) {
             var handler = handlers[name];

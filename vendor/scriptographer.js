@@ -7877,6 +7877,28 @@ ${value}\r
   }
   __name(call, "call");
 
+  // src/script.js
+  function setScript(file, directory, preferences) {
+    inject(globalThis, {
+      script: {
+        file: file ? new LocalFile2(file) : null,
+        directory: directory ? new LocalFile2(directory) : null,
+        keepAlive: false,
+        preferences: preferences ? paper.Base.importJSON(preferences) : {}
+      }
+    });
+  }
+  __name(setScript, "setScript");
+  function getPreferences() {
+    const preferences = globalThis.script?.preferences;
+    return preferences ? paper.Base.exportJSON(preferences) : null;
+  }
+  __name(getPreferences, "getPreferences");
+  function keepsAlive() {
+    return globalThis.script?.keepAlive === true;
+  }
+  __name(keepsAlive, "keepsAlive");
+
   // src/storage.js
   var sessions = /* @__PURE__ */ new WeakMap();
   var Storage = class {
@@ -9697,6 +9719,7 @@ ${value}\r
   setupKeys();
   Object.assign(natives, { dispatchKey, hasKeyListeners });
   Object.assign(natives, { getSelectedKeys });
+  Object.assign(natives, { setScript, getPreferences, keepsAlive });
   function getSelectedKeys(project) {
     return JSON.stringify(
       project.selectedItems.map((item) => item.key).filter((key) => Number.isFinite(key))

@@ -288,7 +288,7 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 	} else if (_url) {
 		_preferences = [NSString stringWithContentsOfURL:[self preferencesURL]
 				encoding:NSUTF8StringEncoding error:nil];
-		[_scriptographer invokeMethod:@"setScript" withArguments:@[
+		[_natives invokeMethod:@"setScript" withArguments:@[
 			_url.path, _url.URLByDeletingLastPathComponent.path,
 			_preferences ?: [NSNull null]
 		]];
@@ -924,7 +924,7 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 }
 
 - (void)keepPreferences {
-	JSValue *value = [_scriptographer invokeMethod:@"getPreferences"
+	JSValue *value = [_natives invokeMethod:@"getPreferences"
 			withArguments:@[]];
 	NSString *preferences = value.isString ? value.toString : nil;
 	if (_url && preferences && ![preferences isEqualToString:_preferences]) {
@@ -939,8 +939,7 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 }
 
 - (BOOL)keepsAlive {
-	return [_scriptographer invokeMethod:@"keepsAlive" withArguments:@[]]
-			.toBool;
+	return [_natives invokeMethod:@"keepsAlive" withArguments:@[]].toBool;
 }
 
 - (BOOL)callHandler:(NSString *)name {
