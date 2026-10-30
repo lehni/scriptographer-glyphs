@@ -709,7 +709,7 @@
     WritableStreamDefaultWriter: () => WritableStreamDefaultWriter
   });
 
-  // ../vendor/web-streams-polyfill.mjs
+  // vendor/web-streams-polyfill.mjs
   /**
    * @license
    * web-streams-polyfill v4.3.0
@@ -7994,7 +7994,7 @@ ${value}\r
   };
   defineInterfaces(StorageManager);
 
-  // ../vendor/urlpattern-polyfill.mjs
+  // vendor/urlpattern-polyfill.mjs
   var Pe2 = Object.defineProperty;
   var a2 = /* @__PURE__ */ __name((e2, t2) => Pe2(e2, "name", { value: t2, configurable: true }), "a");
   var P2 = class {
