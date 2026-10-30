@@ -102,7 +102,7 @@
     isSecureContext: () => isSecureContext,
     performance: () => performance2,
     queueMicrotask: () => queueMicrotask2,
-    reportError: () => reportError
+    reportError: () => reportError2
   });
 
   // src/format-error.js
@@ -130,15 +130,15 @@
       try {
         callback();
       } catch (err) {
-        reportError(err);
+        reportError2(err);
       }
     });
   }
   __name(queueMicrotask2, "queueMicrotask");
-  function reportError(err) {
+  function reportError2(err) {
     console.error(`Uncaught ${formatError(err)}`);
   }
-  __name(reportError, "reportError");
+  __name(reportError2, "reportError");
   var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   function atob2(data) {
     let text = String(data).replace(/[\t\n\f\r ]/g, "");
@@ -263,7 +263,7 @@
               throw new TypeError("Invalid listener: it has no handleEvent().");
             }
           } catch (err) {
-            reportError(err);
+            reportError2(err);
           }
           state.passive = false;
           if (state.stopImmediately) break;
@@ -518,21 +518,21 @@
             return handlersByTarget.get(this)?.[type]?.handler ?? null;
           },
           set [`on${type}`](handler2) {
-            let handlers = handlersByTarget.get(this);
-            if (!handlers) {
-              handlers = {};
-              handlersByTarget.set(this, handlers);
+            let handlers2 = handlersByTarget.get(this);
+            if (!handlers2) {
+              handlers2 = {};
+              handlersByTarget.set(this, handlers2);
             }
-            const entry = handlers[type];
+            const entry = handlers2[type];
             if (typeof handler2 !== "function") {
               if (entry) {
                 this.removeEventListener(type, entry.listener);
-                delete handlers[type];
+                delete handlers2[type];
               }
             } else if (entry) {
               entry.handler = handler2;
             } else {
-              const entry2 = handlers[type] = { handler: handler2 };
+              const entry2 = handlers2[type] = { handler: handler2 };
               entry2.listener = function(event) {
                 if (entry2.handler.call(this, event) === false) {
                   event.preventDefault();
@@ -7898,6 +7898,40 @@ ${value}\r
     return globalThis.script?.keepAlive === true;
   }
   __name(keepsAlive, "keepsAlive");
+  var handlerNames = [
+    "onStartup",
+    "onShutdown",
+    "onStop",
+    "onAppActivate",
+    "onAppDeactivate",
+    "onEditOptions"
+  ];
+  var handlers = {};
+  function executeScript(scope, source, url, load) {
+    const exported = scope.PaperScript.execute(source, scope, {
+      url,
+      load,
+      handlers: handlerNames
+    });
+    if (typeof exported?.then === "function") {
+      exported.then(
+        (exported2) => Object.assign(handlers, exported2),
+        (err) => reportError(err)
+      );
+    } else {
+      Object.assign(handlers, exported);
+    }
+  }
+  __name(executeScript, "executeScript");
+  function callHandler(name) {
+    const handler2 = handlers[name];
+    if (typeof handler2 === "function") {
+      handler2();
+      return true;
+    }
+    return false;
+  }
+  __name(callHandler, "callHandler");
 
   // src/storage.js
   var sessions = /* @__PURE__ */ new WeakMap();
@@ -9719,7 +9753,13 @@ ${value}\r
   setupKeys();
   Object.assign(natives, { dispatchKey, hasKeyListeners });
   Object.assign(natives, { getSelectedKeys });
-  Object.assign(natives, { setScript, getPreferences, keepsAlive });
+  Object.assign(natives, {
+    executeScript,
+    callHandler,
+    setScript,
+    getPreferences,
+    keepsAlive
+  });
   function getSelectedKeys(project) {
     return JSON.stringify(
       project.selectedItems.map((item) => item.key).filter((key) => Number.isFinite(key))

@@ -36,8 +36,7 @@ var Scriptographer = new function() {
         scope = null,
         // The overlay's canvas context, drawing into the edit view:
         overlay = null,
-        // The handlers the script exported, which the runtime calls:
-        handlers = {},
+
         // The last snapshot of each layer, by its key:
         snapshots = {};
 
@@ -559,8 +558,9 @@ var Scriptographer = new function() {
     }
 
     return {
-        // Runs the script's code, or a line of the console, in its scope:
-        execute: function(source, file) {
+        // Runs the script's code, or a line of the console, in its scope,
+        // with the bundle's `executeScript()`:
+        execute: function(source, file, executeScript) {
             if (!scope) {
                 scope = new paper.PaperScope();
                 scope._glyphsProjects = {};
@@ -571,33 +571,8 @@ var Scriptographer = new function() {
                     scope._glyphsProjects[''] = new scope.Project(
                             new scope.Size(1, 1));
                 }
-                var exported = scope.PaperScript.execute(source, scope, {
-                    url: file,
-                    handlers: ['onStartup', 'onShutdown', 'onStop',
-                            'onAppActivate', 'onAppDeactivate',
-                            'onEditOptions']
-                });
-                // A script with top-level await exports once it's done:
-                if (exported && typeof exported.then === 'function') {
-                    exported.then(function(exported) {
-                        Object.assign(handlers, exported);
-                    }, report);
-                } else {
-                    Object.assign(handlers, exported);
-                }
+                executeScript(scope, source, file);
             });
-        },
-
-        // Calls the handler the script exported, if it has it:
-        callHandler: function(name) {
-            var handler = handlers[name];
-            if (typeof handler === 'function') {
-                invoke(function() {
-                    handler();
-                });
-                return true;
-            }
-            return false;
         },
 
         // Calls a function of the bundle that the runtime calls the script

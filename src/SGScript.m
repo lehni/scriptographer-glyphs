@@ -872,7 +872,8 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 
 - (void)execute:(NSString *)source {
 	[_scriptographer invokeMethod:@"execute"
-			withArguments:@[source, _url.path ?: _name]];
+			withArguments:@[source, _url.path ?: _name,
+				_natives[@"executeScript"]]];
 	[self didWork];
 }
 
@@ -943,8 +944,9 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 }
 
 - (BOOL)callHandler:(NSString *)name {
-	BOOL hasHandler = [_scriptographer invokeMethod:@"callHandler"
-			withArguments:@[name]].toBool;
+	BOOL hasHandler = [_scriptographer invokeMethod:@"call" withArguments:@[
+		_natives[@"callHandler"], @[name]
+	]].toBool;
 	if (hasHandler)
 		[self didWork];
 	return hasHandler;

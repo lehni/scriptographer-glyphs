@@ -54,7 +54,11 @@ function createGlyphs(paths) {
   for (const file of ['vendor/paper-hosted.js', 'vendor/scriptographer.js', 'js/glyphs.js']) {
     vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), context, { filename: file })
   }
-  return { layer, output, natives: scriptographer, Scriptographer: context.Scriptographer }
+  const Scriptographer = context.Scriptographer
+  // Runs scripts with the bundle's executeScript(), as the plugin does:
+  const execute = (source, file) =>
+    Scriptographer.execute(source, file, scriptographer.executeScript)
+  return { layer, output, natives: scriptographer, Scriptographer, execute }
 }
 
 // Values from the VM's realm, as plain values of this one:
@@ -67,7 +71,7 @@ function round(nodes) {
 }
 
 test('closed paths start at their last node', () => {
-  const { Scriptographer } = createGlyphs([])
+  const { Scriptographer, execute } = createGlyphs([])
   // A closed path starts at its last node in Glyphs:
   const nodes = [
     100, 0, OFF, 0, 200, 100, OFF, 0, 200, 200, CURVE, 100,
@@ -80,7 +84,7 @@ test('closed paths start at their last node', () => {
 })
 
 test('quadratic curves are raised to cubic curves, with implied points', () => {
-  const { Scriptographer } = createGlyphs([])
+  const { Scriptographer, execute } = createGlyphs([])
   const nodes = [0, 0, LINE, 0, 30, 0, OFF, 0, 60, 30, OFF, 0, 60, 60, QCURVE, 0]
   const segments = plain(Scriptographer._getSegments(nodes, false))
   // The implied point between the two off-curve points becomes a segment:
@@ -90,8 +94,8 @@ test('quadratic curves are raised to cubic curves, with implied points', () => {
 })
 
 test('a tool script draws a new path into the layer', () => {
-  const { layer, output, Scriptographer } = createGlyphs([])
-  Scriptographer.execute(`
+  const { layer, output, Scriptographer, execute } = createGlyphs([])
+  execute(`
     var path
     function onMouseDown(event) {
       path = new Path()
@@ -113,12 +117,12 @@ test('a tool script draws a new path into the layer', () => {
 })
 
 test('a script changes the paths of the layer in place', () => {
-  const { layer, output, Scriptographer } = createGlyphs([{
+  const { layer, output, Scriptographer, execute } = createGlyphs([{
     key: 2,
     closed: true,
     nodes: [100, 0, LINE, 0, 100, 100, LINE, 0, 0, 0, LINE, 0]
   }])
-  Scriptographer.execute('project.activeLayer.firstChild.translate(10, 20)', 'move.js')
+  execute('project.activeLayer.firstChild.translate(10, 20)', 'move.js')
   assert.deepStrictEqual(output, [])
   assert.strictEqual(layer.paths.length, 1)
   assert.strictEqual(layer.paths[0].key, 2)
@@ -127,12 +131,12 @@ test('a script changes the paths of the layer in place', () => {
 })
 
 test('a running tool sees the changes made in Glyphs meanwhile', () => {
-  const { layer, output, Scriptographer } = createGlyphs([{
+  const { layer, output, Scriptographer, execute } = createGlyphs([{
     key: 2,
     closed: false,
     nodes: [0, 0, LINE, 0, 10, 0, LINE, 0]
   }])
-  Scriptographer.execute(`
+  execute(`
     function onMouseDown(event) {
       print(project.activeLayer.children.length, project.activeLayer.firstChild.lastSegment.point)
     }
@@ -144,18 +148,18 @@ test('a running tool sees the changes made in Glyphs meanwhile', () => {
 })
 
 test('removed paths are removed from the layer', () => {
-  const { layer, output, Scriptographer } = createGlyphs([
+  const { layer, output, Scriptographer, execute } = createGlyphs([
     { key: 2, closed: false, nodes: [0, 0, LINE, 0, 10, 0, LINE, 0] },
     { key: 3, closed: false, nodes: [0, 0, LINE, 0, 20, 0, LINE, 0] }
   ])
-  Scriptographer.execute('project.activeLayer.firstChild.remove()', 'remove.js')
+  execute('project.activeLayer.firstChild.remove()', 'remove.js')
   assert.deepStrictEqual(output, [])
   assert.deepStrictEqual(layer.paths.map(p => p.key), [3])
 })
 
 test('errors are printed with their line', () => {
-  const { output, Scriptographer } = createGlyphs([])
-  Scriptographer.execute('undefinedFunction()', 'error.js')
+  const { output, Scriptographer, execute } = createGlyphs([])
+  execute('undefinedFunction()', 'error.js')
   assert.match(output[0], /undefinedFunction/)
 })
 
@@ -164,8 +168,8 @@ test('closed curved paths are written back in the order of their nodes', () => {
     100, 0, OFF, 0, 200, 100, OFF, 0, 200, 200, CURVE, 100,
     0, 200, LINE, 0, 0, 0, LINE, 0
   ]
-  const { layer, output, Scriptographer } = createGlyphs([{ key: 2, closed: true, nodes }])
-  Scriptographer.execute(`
+  const { layer, output, Scriptographer, execute } = createGlyphs([{ key: 2, closed: true, nodes }])
+  execute(`
     var path = project.activeLayer.firstChild
     path.translate(1, 0)
     path.translate(-1, 0)
@@ -178,8 +182,8 @@ test('closed curved paths are written back in the order of their nodes', () => {
 })
 
 test('new groups become their paths', () => {
-  const { layer, output, Scriptographer } = createGlyphs([])
-  Scriptographer.execute(`
+  const { layer, output, Scriptographer, execute } = createGlyphs([])
+  execute(`
     new Group([
       new Path.Line([0, 0], [10, 0]),
       new Path.Line([0, 10], [10, 10])
@@ -194,12 +198,12 @@ test('new groups become their paths', () => {
 
 test('y points down in scripts, as in VectorCraft', () => {
   // A counter-clockwise contour in Glyphs, as outer contours are:
-  const { output, Scriptographer } = createGlyphs([{
+  const { output, Scriptographer, execute } = createGlyphs([{
     key: 2,
     closed: true,
     nodes: [0, 0, LINE, 0, 100, 0, LINE, 0, 100, 100, LINE, 0, 0, 100, LINE, 0]
   }])
-  Scriptographer.execute(`
+  execute(`
     function onMouseDown(event) {
       var path = project.activeLayer.firstChild
       print(event.point, path.bounds, path.clockwise)
@@ -213,8 +217,8 @@ test('y points down in scripts, as in VectorCraft', () => {
 })
 
 test('palettes change the layer through their handlers', () => {
-  const { layer, output, natives, Scriptographer } = createGlyphs([])
-  Scriptographer.execute(`
+  const { layer, output, natives, Scriptographer, execute } = createGlyphs([])
+  execute(`
     new Palette('Lines', {
       length: {
         type: 'number', label: 'Length', value: 10,
@@ -242,11 +246,11 @@ test('palettes change the layer through their handlers', () => {
 
 test('scripts see the nodes selected in Glyphs, and select their own', () => {
   const nodes = [0, 0, LINE, 0, 100, 0, LINE, 0, 100, 100, LINE, 0]
-  const { layer, output, Scriptographer } = createGlyphs([
+  const { layer, output, Scriptographer, execute } = createGlyphs([
     { key: 2, closed: false, nodes, selection: [1] },
     { key: 3, closed: false, nodes: [0, 0, LINE, 0, 10, 0, LINE, 0] }
   ])
-  Scriptographer.execute(`
+  execute(`
     function onMouseDown(event) {
       var selected = project.selectedItems
       print(selected.length, selected[0].key, selected[0].segments.map(function(s) {
@@ -266,8 +270,8 @@ test('scripts see the nodes selected in Glyphs, and select their own', () => {
 })
 
 test('items without paths are dropped, with a warning', () => {
-  const { layer, output, Scriptographer } = createGlyphs([])
-  Scriptographer.execute(`
+  const { layer, output, Scriptographer, execute } = createGlyphs([])
+  execute(`
     new PointText([0, 0]).content = 'a'
     new PointText([0, 10]).content = 'b'
   `, 'text.js')
