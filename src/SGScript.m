@@ -100,8 +100,8 @@ static NSMapTable<NSValue *, SGScript *> *scriptsByContext;
 	dispatch_once(&once, ^{
 		NSBundle *bundle = [NSBundle bundleForClass:self];
 		NSMutableArray *list = [NSMutableArray array];
-		for (NSString *name in @[@"paper-hosted", @"scriptographer",
-				@"glyphs"]) {
+		for (NSString *name in @[@"acorn", @"paper-hosted",
+				@"scriptographer", @"glyphs"]) {
 			NSURL *url = [bundle URLForResource:name withExtension:@"js"];
 			[list addObject:@[url, [NSString stringWithContentsOfURL:url
 					encoding:NSUTF8StringEncoding error:nil] ?: @""]];
@@ -239,11 +239,12 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 			[link reportError:exception.toString];
 			return;
 		}
-		JSValue *trace = exception[@"stack"];
-		NSString *stack = trace.isString ? trace.toString : nil;
-		[SGScript print:stack.length
-				? [NSString stringWithFormat:@"%@\n%@", exception, stack]
-				: exception.toString];
+		// As the bundle reports them, once it's loaded:
+		JSValue *report = context[@"reportError"];
+		if (report.isObject)
+			[report callWithArguments:@[exception]];
+		else
+			[SGScript print:exception.toString];
 	};
 	_context[@"self"] = _context.globalObject;
 	_context[@"navigator"] = @{
@@ -310,6 +311,26 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 		@"now": ^double {
 			SGScript *script = weakSelf;
 			return script ? (CACurrentMediaTime() - script->_start) * 1000 : 0;
+		},
+		// Through the C API, which hands the exception back to throw it to
+		// the caller, where -evaluateScript: would report it:
+		@"evaluate": ^JSValue *(NSString *source, NSString *url) {
+			JSContext *context = [JSContext currentContext];
+			JSStringRef code = JSStringCreateWithCFString(
+					(__bridge CFStringRef)source);
+			JSStringRef name = JSStringCreateWithCFString(
+					(__bridge CFStringRef)url);
+			JSValueRef exception = NULL;
+			JSValueRef result = JSEvaluateScript(context.JSGlobalContextRef,
+					code, NULL, name, 1, &exception);
+			JSStringRelease(code);
+			JSStringRelease(name);
+			if (exception) {
+				context.exception = [JSValue valueWithJSValueRef:exception
+						inContext:context];
+				return nil;
+			}
+			return [JSValue valueWithJSValueRef:result inContext:context];
 		},
 		@"random": ^JSValue *(NSUInteger length) {
 			NSMutableData *data = [NSMutableData dataWithLength:length];
@@ -872,7 +893,7 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 
 - (void)execute:(NSString *)source {
 	[_scriptographer invokeMethod:@"execute"
-			withArguments:@[source, _url.path ?: _name,
+			withArguments:@[source, _url.absoluteString ?: _name,
 				_natives[@"executeScript"]]];
 	[self didWork];
 }

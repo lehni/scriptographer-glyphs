@@ -4,6 +4,7 @@
 //
 
 #import "SGWindowController.h"
+#import "SGConsoleController.h"
 #import "SGRuntime.h"
 #import "SGScript.h"
 #import <GlyphsCore/GlyphsCore.h>
@@ -58,9 +59,6 @@ static const NSUInteger maxDepth = 8;
 	NSMutableDictionary<NSString *, NSURL *> *_items;
 	NSMapTable<id, NSArray *> *_children;
 	SGOutlineView *_outlineView;
-	NSSplitView *_splitView;
-	NSTextView *_consoleView;
-	NSTextField *_inputField;
 	NSButton *_runButton, *_editButton, *_revealButton;
 }
 
@@ -72,6 +70,7 @@ static const NSUInteger maxDepth = 8;
 		item.target = self;
 		[menu addItem:[NSMenuItem separatorItem]];
 		[menu addItem:item];
+		[SGConsoleController addMenuItem];
 	}
 }
 
@@ -113,9 +112,6 @@ static const NSUInteger maxDepth = 8;
 		[self reloadScripts];
 		SGRuntime *runtime = [SGRuntime sharedRuntime];
 		__weak SGWindowController *weakSelf = self;
-		runtime.printHandler = ^(NSString *line) {
-			[weakSelf appendToConsole:line];
-		};
 		runtime.stateHandler = ^{
 			[weakSelf reloadData];
 		};
@@ -385,9 +381,7 @@ static const NSUInteger maxDepth = 8;
 }
 
 - (void)toggleConsole:(id)sender {
-	NSView *console = _splitView.arrangedSubviews.lastObject;
-	console.hidden = !console.hidden;
-	[_splitView adjustSubviews];
+	[[SGConsoleController sharedController] toggle];
 }
 
 - (void)addFolder:(id)sender {
@@ -511,39 +505,15 @@ static const NSUInteger maxDepth = 8;
 	[buttons setCustomSpacing:10 afterView:buttons.views[3]];
 	[buttons setCustomSpacing:10 afterView:buttons.views[5]];
 
-	// The console:
-	NSScrollView *consoleScroll = [NSTextView scrollableTextView];
-	_consoleView = consoleScroll.documentView;
-	_consoleView.editable = NO;
-	_consoleView.font = [NSFont monospacedSystemFontOfSize:11
-			weight:NSFontWeightRegular];
-	_inputField = [NSTextField textFieldWithString:@""];
-	_inputField.placeholderString = @"Evaluate";
-	_inputField.font = _consoleView.font;
-	_inputField.target = self;
-	_inputField.action = @selector(evaluateInput:);
-
-	NSStackView *top = [NSStackView stackViewWithViews:@[scriptsScroll, buttons]];
-	NSStackView *bottom = [NSStackView stackViewWithViews:@[consoleScroll,
-			_inputField]];
-	for (NSStackView *stack in @[top, bottom]) {
-		stack.orientation = NSUserInterfaceLayoutOrientationVertical;
-		stack.alignment = NSLayoutAttributeLeading;
-		stack.edgeInsets = NSEdgeInsetsMake(6, 6, 6, 6);
-		stack.spacing = 6;
-	}
-	for (NSView *view in @[scriptsScroll, consoleScroll, _inputField]) {
-		[view.widthAnchor constraintEqualToAnchor:view.superview.widthAnchor
-				constant:-12].active = YES;
-	}
-
-	_splitView = [[NSSplitView alloc] init];
-	_splitView.vertical = NO;
-	_splitView.dividerStyle = NSSplitViewDividerStyleThin;
-	[_splitView addArrangedSubview:top];
-	[_splitView addArrangedSubview:bottom];
-	self.window.contentView = _splitView;
-	[_splitView setPosition:320 ofDividerAtIndex:0];
+	NSStackView *stack = [NSStackView stackViewWithViews:@[scriptsScroll,
+			buttons]];
+	stack.orientation = NSUserInterfaceLayoutOrientationVertical;
+	stack.alignment = NSLayoutAttributeLeading;
+	stack.edgeInsets = NSEdgeInsetsMake(6, 6, 6, 6);
+	stack.spacing = 6;
+	self.window.contentView = stack;
+	[scriptsScroll.widthAnchor constraintEqualToAnchor:stack.widthAnchor
+			constant:-12].active = YES;
 }
 
 // The panel's menu, in its title bar: the folders, and the reference.
@@ -569,26 +539,6 @@ static const NSUInteger maxDepth = 8;
 	accessory.view = button;
 	accessory.layoutAttribute = NSLayoutAttributeTrailing;
 	[self.window addTitlebarAccessoryViewController:accessory];
-}
-
-- (void)appendToConsole:(NSString *)line {
-	NSDictionary *attributes = @{
-		NSFontAttributeName: _consoleView.font,
-		NSForegroundColorAttributeName: NSColor.textColor
-	};
-	[_consoleView.textStorage appendAttributedString:
-			[[NSAttributedString alloc] initWithString:
-				[line stringByAppendingString:@"\n"] attributes:attributes]];
-	[_consoleView scrollToEndOfDocument:nil];
-}
-
-- (void)evaluateInput:(NSTextField *)sender {
-	NSString *code = sender.stringValue;
-	if (code.length) {
-		[self appendToConsole:[@"> " stringByAppendingString:code]];
-		sender.stringValue = @"";
-		[[SGRuntime sharedRuntime] evaluate:code];
-	}
 }
 
 #pragma mark - NSOutlineViewDataSource

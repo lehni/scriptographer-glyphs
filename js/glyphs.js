@@ -501,21 +501,15 @@ var Scriptographer = new function() {
                 bind(takeSnapshot());
             return callback();
         } catch (e) {
-            report(e);
+            reportError(e);
         } finally {
             try {
                 if (scope)
                     commit();
             } catch (e) {
-                report(e);
+                reportError(e);
             }
         }
-    }
-
-    function report(error) {
-        console.error(error && error.stack
-                ? error + '\n' + error.stack
-                : '' + error);
     }
 
     // The timers of the script, which the runtime gives scripts, not the
@@ -613,7 +607,7 @@ var Scriptographer = new function() {
                 scope.project.draw(overlay, new paper.Matrix(matrix),
                         pixelRatio);
             } catch (e) {
-                report(e);
+                reportError(e);
             }
         },
 

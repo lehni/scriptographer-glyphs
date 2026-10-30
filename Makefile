@@ -15,14 +15,15 @@ FRAMEWORKS = -framework Cocoa -framework JavaScriptCore \
 
 all: $(BUNDLE)
 
-$(BUNDLE): $(SOURCES) $(wildcard src/*.h) js/glyphs.js vendor/paper-hosted.js \
-		vendor/scriptographer.js resources/Info.plist $(shell find examples -type f | sed 's/ /\\ /g')
+$(BUNDLE): $(SOURCES) $(wildcard src/*.h) js/glyphs.js vendor/acorn.js \
+		vendor/paper-hosted.js vendor/scriptographer.js resources/Info.plist \
+		$(shell find examples -type f | sed 's/ /\\ /g')
 	rm -rf $(BUNDLE)
 	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Resources
 	clang $(FLAGS) -bundle $(FRAMEWORKS) $(SOURCES) \
 		-o $(BUNDLE)/Contents/MacOS/Scriptographer
 	cp resources/Info.plist $(BUNDLE)/Contents/
-	cp js/glyphs.js vendor/paper-hosted.js \
+	cp js/glyphs.js vendor/acorn.js vendor/paper-hosted.js \
 		vendor/scriptographer.js $(BUNDLE)/Contents/Resources/
 	cp -R examples $(BUNDLE)/Contents/Resources/Examples
 
@@ -59,12 +60,14 @@ build/font.test: test/font.test.m src/SGCSSFont.m src/SGCSSFont.h
 # Runs from build/script, next to the sources each realm loads, as the
 # plugin's bundle has them:
 build/script/script.test: test/script.test.m $(SOURCES) $(wildcard src/*.h) \
-		js/glyphs.js vendor/paper-hosted.js vendor/scriptographer.js
+		js/glyphs.js vendor/acorn.js vendor/paper-hosted.js vendor/scriptographer.js
 	mkdir -p build/script
-	cp js/glyphs.js vendor/paper-hosted.js vendor/scriptographer.js build/script/
+	cp js/glyphs.js vendor/acorn.js vendor/paper-hosted.js \
+		vendor/scriptographer.js build/script/
 	clang -fobjc-arc -fmodules -mmacosx-version-min=12.0 -Wall -F "$(GLYPHS)" \
 		-Wl,-rpath,"$(GLYPHS)" $(FRAMEWORKS) test/script.test.m \
-		$(filter-out src/SGScriptTool.m src/SGWindowController.m,$(SOURCES)) -o $@
+		$(filter-out src/SGScriptTool.m src/SGWindowController.m \
+			src/SGConsoleController.m,$(SOURCES)) -o $@
 
 # WPT's OffscreenCanvas tests, from VectorCraft's corpus, against the
 # failures VectorCraft expects (a copy of its tests/wpt-expected-failures.txt):
@@ -76,13 +79,15 @@ wpt: build/script/wpt
 build/script/wpt: test/wpt.m build/script/script.test
 	clang -fobjc-arc -fmodules -mmacosx-version-min=12.0 -Wall -F "$(GLYPHS)" \
 		-Wl,-rpath,"$(GLYPHS)" $(FRAMEWORKS) test/wpt.m \
-		$(filter-out src/SGScriptTool.m src/SGWindowController.m,$(SOURCES)) -o $@
+		$(filter-out src/SGScriptTool.m src/SGWindowController.m \
+			src/SGConsoleController.m,$(SOURCES)) -o $@
 
 # Scriptographer's bundle and Paper.js, from scriptographer-core, which
 # VectorCraft shares:
 CORE = ../scriptographer-core
 core:
-	cp $(CORE)/dist/scriptographer.js $(CORE)/vendor/paper-hosted.js vendor/
+	cp $(CORE)/dist/scriptographer.js $(CORE)/vendor/acorn.js \
+		$(CORE)/vendor/paper-hosted.js vendor/
 
 install: $(BUNDLE)
 	mkdir -p "$(PLUGINS)"

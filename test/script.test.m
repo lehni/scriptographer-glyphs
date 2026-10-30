@@ -395,6 +395,26 @@ int main(void) {
 		runtime.stopHandler = nil;
 		runtime.responseTime = 5;
 
+		// Errors show where they are in the script, not the runtime's frames:
+		NSURL *broken = [NSURL fileURLWithPath:file(@"broken.js",
+				@"function draw() {\n  [1].forEach(function() { undefined.x })\n}"
+				"\ndraw()")];
+		NSURL *invalid = [NSURL fileURLWithPath:file(@"invalid.js",
+				@"var a = 1;\nconsole.log(import)")];
+		[runtime runScriptAtURL:broken];
+		[runtime runScriptAtURL:invalid];
+		[runtime evaluate:@"console.log(import)"];
+		NSString *at = broken.absoluteString;
+		CHECK(([output isEqualToArray:@[
+			[NSString stringWithFormat:@"Uncaught TypeError: undefined is not "
+				"an object (evaluating 'undefined.x')\n@%@:2:37\n"
+				"draw@%@:2:14\n@%@:4:5", at, at, at],
+			[NSString stringWithFormat:@"Uncaught SyntaxError: Unexpected "
+				"token (at %@:2:19)", invalid.absoluteString],
+			@"Uncaught SyntaxError: Unexpected token (at Console:1:19)"
+		]]));
+		[output removeAllObjects];
+
 		// localStorage stays with the script, sessionStorage doesn't:
 		SGScript *again = [[SGScript alloc] initWithURL:url];
 		[again execute:@

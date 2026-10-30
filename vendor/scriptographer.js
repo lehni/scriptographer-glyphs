@@ -109,9 +109,24 @@
   function formatError(err) {
     const text = String(err);
     const stack = err?.stack;
-    return typeof stack === "string" && stack.startsWith(text) ? stack : text;
+    if (typeof stack !== "string") return text;
+    const frames = (stack.startsWith(text) ? stack.slice(text.length) : stack).split("\n").filter((line) => {
+      const file = getFile(line);
+      return !!file && getFolder(file) !== runtimeFolder;
+    });
+    return [text, ...frames].join("\n");
   }
   __name(formatError, "formatError");
+  function getFile(frame) {
+    return frame.match(/([a-z][\w+.-]*:[^\s()@]+):\d+:\d+\)?$/i)?.[1];
+  }
+  __name(getFile, "getFile");
+  function getFolder(file) {
+    return file.slice(0, file.lastIndexOf("/") + 1);
+  }
+  __name(getFolder, "getFolder");
+  var runtimeFile = new Error().stack?.split("\n").map(getFile).find(Boolean);
+  var runtimeFolder = runtimeFile ? getFolder(runtimeFile) : null;
 
   // src/global-scope.js
   var isSecureContext = true;
@@ -7112,7 +7127,7 @@ ${stack}` : ""));
     const body = await Body.read(request);
     signal?.throwIfAborted();
     if (url.startsWith("file:") && natives.fs) {
-      return getFile(method, url.replace(/#.*$/s, ""));
+      return getFile2(method, url.replace(/#.*$/s, ""));
     }
     if (url.startsWith("data:")) {
       const href = url.replace(/#.*$/s, "");
@@ -7177,7 +7192,7 @@ ${stack}` : ""));
   }
   __name(fetch2, "fetch");
   var mostBytes = 512 * 1024 * 1024;
-  function getFile(method, url) {
+  function getFile2(method, url) {
     if (method !== "GET" && method !== "HEAD") {
       throw new TypeError(`fetch failed: '${url}' can only be read.`);
     }
@@ -7196,7 +7211,7 @@ ${stack}` : ""));
     });
     return setResponse(response, { url, redirected: false, type: "basic" });
   }
-  __name(getFile, "getFile");
+  __name(getFile2, "getFile");
   function getData(url) {
     const data = url.slice("data:".length);
     const comma = data.indexOf(",");
@@ -7911,6 +7926,7 @@ ${value}\r
     const exported = scope.PaperScript.execute(source, scope, {
       url,
       load,
+      evaluate: natives.evaluate,
       handlers: handlerNames
     });
     if (typeof exported?.then === "function") {

@@ -1,0 +1,148 @@
+//
+//  SGConsoleController.m
+//  Scriptographer for Glyphs
+//
+
+#import "SGConsoleController.h"
+#import "SGRuntime.h"
+
+@interface SGConsoleController () <NSTextViewDelegate>
+@end
+
+@implementation SGConsoleController {
+	NSTextView *_inputView;
+	NSTextView *_logView;
+}
+
++ (void)addMenuItem {
+	NSMenuItem *item = [[NSMenuItem alloc]
+			initWithTitle:@"Scriptographer Console"
+			action:@selector(showConsole:) keyEquivalent:@""];
+	item.target = self;
+	[[NSApp windowsMenu] addItem:item];
+	// Made now, to keep what the scripts print from the start:
+	[self sharedController];
+}
+
++ (void)showConsole:(id)sender {
+	[[self sharedController] showWindow:sender];
+}
+
++ (instancetype)sharedController {
+	static SGConsoleController *controller;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		controller = [[SGConsoleController alloc] init];
+	});
+	return controller;
+}
+
+- (instancetype)init {
+	NSPanel *panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 420, 300)
+			styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+				| NSWindowStyleMaskResizable | NSWindowStyleMaskUtilityWindow
+			backing:NSBackingStoreBuffered defer:YES];
+	panel.title = @"Scriptographer Console";
+	panel.floatingPanel = YES;
+	panel.hidesOnDeactivate = YES;
+	panel.becomesKeyOnlyIfNeeded = YES;
+	self = [super initWithWindow:panel];
+	if (self) {
+		[self setupViews];
+		__weak SGConsoleController *weakSelf = self;
+		[SGRuntime sharedRuntime].printHandler = ^(NSString *line) {
+			[weakSelf appendLine:line];
+		};
+		[panel center];
+		panel.frameAutosaveName = @"Scriptographer Console";
+	}
+	return self;
+}
+
+- (void)toggle {
+	if (self.window.visible)
+		[self close];
+	else
+		[self showWindow:nil];
+}
+
+- (void)setupViews {
+	NSFont *font = [NSFont monospacedSystemFontOfSize:11
+			weight:NSFontWeightRegular];
+	// The input, two lines high:
+	NSScrollView *inputScroll = [NSTextView scrollableTextView];
+	_inputView = inputScroll.documentView;
+	_inputView.font = font;
+	_inputView.richText = NO;
+	_inputView.automaticQuoteSubstitutionEnabled = NO;
+	_inputView.automaticDashSubstitutionEnabled = NO;
+	_inputView.delegate = self;
+	inputScroll.borderType = NSBezelBorder;
+	[inputScroll.heightAnchor constraintEqualToConstant:
+			ceil(font.ascender - font.descender + font.leading) * 2 + 8]
+			.active = YES;
+
+	NSScrollView *logScroll = [NSTextView scrollableTextView];
+	_logView = logScroll.documentView;
+	_logView.editable = NO;
+	_logView.font = font;
+
+	// The bottom bar, with Clear Console, Scriptographer's refresh arrows:
+	NSButton *clear = [NSButton buttonWithImage:[NSImage
+			imageWithSystemSymbolName:@"arrow.clockwise"
+			accessibilityDescription:@"Clear Console"]
+			target:self action:@selector(clear:)];
+	clear.bordered = NO;
+	clear.toolTip = @"Clear Console";
+	[clear.widthAnchor constraintEqualToConstant:24].active = YES;
+
+	NSStackView *stack = [NSStackView stackViewWithViews:@[inputScroll,
+			logScroll, clear]];
+	stack.orientation = NSUserInterfaceLayoutOrientationVertical;
+	stack.alignment = NSLayoutAttributeLeading;
+	stack.edgeInsets = NSEdgeInsetsMake(6, 6, 6, 6);
+	stack.spacing = 6;
+	[logScroll setContentHuggingPriority:NSLayoutPriorityDefaultLow
+			forOrientation:NSLayoutConstraintOrientationVertical];
+	self.window.contentView = stack;
+	for (NSView *view in @[inputScroll, logScroll]) {
+		[view.widthAnchor constraintEqualToAnchor:stack.widthAnchor
+				constant:-12].active = YES;
+	}
+}
+
+- (void)appendLine:(NSString *)line {
+	NSDictionary *attributes = @{
+		NSFontAttributeName: _logView.font,
+		NSForegroundColorAttributeName: NSColor.textColor
+	};
+	[_logView.textStorage appendAttributedString:
+			[[NSAttributedString alloc] initWithString:
+				[line stringByAppendingString:@"\n"] attributes:attributes]];
+	[_logView scrollToEndOfDocument:nil];
+}
+
+- (void)clear:(id)sender {
+	_logView.string = @"";
+}
+
+// Return goes to a new line as usual, and runs the line it ends. The text
+// stays, to run lines again.
+- (BOOL)textView:(NSTextView *)textView doCommandBySelector:(SEL)selector {
+	if (selector != @selector(insertNewline:))
+		return NO;
+	NSString *text = textView.string;
+	NSUInteger cursor = textView.selectedRange.location;
+	NSRange line = [text lineRangeForRange:NSMakeRange(cursor, 0)];
+	NSString *code = [[text substringWithRange:NSMakeRange(line.location,
+			cursor - line.location)] stringByTrimmingCharactersInSet:
+				NSCharacterSet.whitespaceCharacterSet];
+	[textView insertNewlineIgnoringFieldEditor:nil];
+	if (code.length) {
+		[self appendLine:[@"> " stringByAppendingString:code]];
+		[[SGRuntime sharedRuntime] evaluate:code];
+	}
+	return YES;
+}
+
+@end
