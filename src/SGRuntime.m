@@ -33,6 +33,7 @@
 		_keysByObject = [NSMapTable weakToStrongObjectsMapTable];
 		_objectsByKey = [NSMapTable strongToWeakObjectsMapTable];
 		_nextKey = 1;
+		_responseTime = 5;
 		// The scripts hear when Glyphs comes to the front, leaves it, and
 		// quits:
 		NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
@@ -289,6 +290,20 @@
 		if (_stateHandler)
 			_stateHandler();
 	}
+}
+
+// As browsers ask about a page that hangs:
+- (BOOL)shouldStopScript:(SGScript *)script {
+	if (_stopHandler)
+		return _stopHandler(script);
+	NSAlert *alert = [[NSAlert alloc] init];
+	alert.messageText = [NSString stringWithFormat:@"“%@” isn't responding",
+			script.name ?: @"A script"];
+	alert.informativeText = @"The script hasn't finished its work. You can "
+			"wait for it, or stop it.";
+	[alert addButtonWithTitle:@"Stop"];
+	[alert addButtonWithTitle:@"Wait"];
+	return [alert runModal] == NSAlertFirstButtonReturn;
 }
 
 #pragma mark - Overlays

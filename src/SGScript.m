@@ -19,6 +19,7 @@
 #import "SGWorkers.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 #import <CommonCrypto/CommonDigest.h>
+#import <dlfcn.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 // The DOMException browsers give for a file system error: `isWriting` tells
@@ -38,6 +39,16 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 	SGThrowDOMException(name, [NSString stringWithFormat:@"%@: %@", path,
 			error.localizedDescription]);
 }
+
+// JavaScriptCore's watchdog, which it exports without a public header
+// (WebKit's JSContextRefPrivate.h), looked up so the plugin runs without it:
+typedef bool (*SGShouldTerminate)(JSContextRef context, void *info);
+typedef void (*SGSetTimeLimit)(JSContextGroupRef group, double limit,
+		SGShouldTerminate callback, void *info);
+typedef void (*SGClearTimeLimit)(JSContextGroupRef group);
+
+// The scripts by the global context of their realm, for the watchdog:
+static NSMapTable<NSValue *, SGScript *> *scriptsByContext;
 
 @implementation SGScript {
 	JSContext *_context;
@@ -64,6 +75,8 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 	SGPorts *_ports;
 	SGCanvas *_canvas;
 	SGWorkers *_workers;
+	// Whether it's being stopped, as it hung:
+	BOOL _isStopping;
 	// The preferences the script last left, as kept:
 	NSString *_preferences;
 	// A worker's link to who it works for, and what receives from them:
@@ -133,20 +146,101 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 	return self;
 }
 
+// The run loop modes the scripts' timers and deliveries run in: not a modal
+// dialog's, so a dialog, a script's own alert() too, holds them off, as a
+// browser's does.
++ (NSArray<NSString *> *)modes {
+	return @[NSDefaultRunLoopMode, NSEventTrackingRunLoopMode];
+}
+
+// A script that works for longer than the limit is asked about, as browsers
+// ask about a page that hangs: Wait asks again later, Stop ends its code with
+// an exception it can't catch, and the script.
+static bool shouldTerminate(JSContextRef context, void *info) {
+	SGScript *script;
+	@synchronized ([SGScript class]) {
+		script = [scriptsByContext objectForKey:[NSValue valueWithPointer:
+				JSContextGetGlobalContext(context)]];
+	}
+	__block BOOL isStopped = NO;
+	void (^ask)(void) = ^{
+		isStopped = [[SGRuntime sharedRuntime] shouldStopScript:script];
+	};
+	if (NSThread.isMainThread)
+		ask();
+	else
+		dispatch_sync(dispatch_get_main_queue(), ask);
+	if (isStopped) {
+		[script stopRunaway];
+	} else {
+		// Waiting sets the limit again, which asking used up:
+		[script limitTime:YES];
+	}
+	return isStopped;
+}
+
+// Restarts the watchdog's clock, which runs from when the script started to
+// work, as when it waits for the user:
+- (void)limitTime:(BOOL)isLimited {
+	static SGSetTimeLimit setLimit;
+	static SGClearTimeLimit clearLimit;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		setLimit = dlsym(RTLD_DEFAULT, "JSContextGroupSetExecutionTimeLimit");
+		clearLimit = dlsym(RTLD_DEFAULT,
+				"JSContextGroupClearExecutionTimeLimit");
+	});
+	JSContextGroupRef group = JSContextGetGroup(_context.JSGlobalContextRef);
+	if (clearLimit)
+		clearLimit(group);
+	if (isLimited && setLimit)
+		setLimit(group, [SGRuntime sharedRuntime].responseTime,
+				shouldTerminate, NULL);
+}
+
+// Once its code has ended, the script stops, and a worker closes:
+- (void)stopRunaway {
+	_isStopping = YES;
+	SGWorkerLink *link = _link;
+	__weak SGScript *weakSelf = self;
+	dispatch_async(dispatch_get_main_queue(), ^{
+		if (link) {
+			link.isClosing = YES;
+		} else if (weakSelf) {
+			[[SGRuntime sharedRuntime] stopScript:weakSelf];
+		}
+	});
+}
+
 - (void)setupContext {
 	// A worker runs on a thread of its own, so in a VM of its own:
 	_context = [[JSContext alloc] initWithVirtualMachine:_link
 			? [[JSVirtualMachine alloc] init] : [SGScript virtualMachine]];
 	_context.name = [@"Scriptographer: " stringByAppendingString:_name];
+	@synchronized ([SGScript class]) {
+		if (!scriptsByContext) {
+			scriptsByContext = [NSMapTable
+					strongToWeakObjectsMapTable];
+		}
+		[scriptsByContext setObject:self forKey:[NSValue valueWithPointer:
+				_context.JSGlobalContextRef]];
+	}
+	[self limitTime:YES];
 	SGWorkerLink *link = _link;
+	__weak SGScript *weakSelf = self;
 	_context.exceptionHandler = ^(JSContext *context, JSValue *exception) {
+		// A script stopped as it hung ends with an exception of its own:
+		SGScript *script = weakSelf;
+		if (script && script->_isStopping)
+			return;
 		// An uncaught error in a worker goes to its Worker, which shows it
 		// unless a handler prevents it, and the worker goes on:
 		if (link) {
 			[link reportError:exception.toString];
 			return;
 		}
-		NSString *stack = [exception[@"stack"] toString];
+		JSValue *trace = exception[@"stack"];
+		NSString *stack = trace.isString ? trace.toString : nil;
 		[SGScript print:stack.length
 				? [NSString stringWithFormat:@"%@\n%@", exception, stack]
 				: exception.toString];
@@ -259,10 +353,14 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 			void (^ask)(void) = ^{
 				answer = [weakSelf ask:question];
 			};
+			// The time the user takes isn't the script's:
+			SGScript *script = weakSelf;
+			[script limitTime:NO];
 			if (NSThread.isMainThread)
 				ask();
 			else
 				dispatch_sync(dispatch_get_main_queue(), ask);
+			[script limitTime:YES];
 			return answer ?: [NSNull null];
 		},
 		@"fs": [self fileSystemNatives],
@@ -571,7 +669,7 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 // On the script's next turn, on its run loop, unless it stopped meanwhile:
 - (void)deliver:(SGMake)make to:(JSValue *)receiver {
 	__weak SGScript *weakSelf = self;
-	CFRunLoopPerformBlock(_runLoop, kCFRunLoopCommonModes, ^{
+	CFRunLoopPerformBlock(_runLoop, (__bridge CFTypeRef)[SGScript modes], ^{
 		SGScript *script = weakSelf;
 		if (!script || !script->_context)
 			return;
@@ -759,7 +857,8 @@ static void throwFileError(NSString *path, NSError *error, BOOL isWriting) {
 		[callback callWithArguments:@[]];
 		[script didWork];
 	}];
-	[[self runLoop] addTimer:instance forMode:NSRunLoopCommonModes];
+	for (NSString *mode in [SGScript modes])
+		[[self runLoop] addTimer:instance forMode:mode];
 	_timers[timer] = instance;
 	return timer;
 }

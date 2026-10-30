@@ -25,6 +25,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, weak, nullable) GSLayer *toolLayer;
 // Counts the edits written to Glyphs, for the tool's undo steps:
 @property (nonatomic, readonly) NSUInteger editCount;
+// How long a script works before it's asked about, in seconds (5):
+@property (nonatomic) double responseTime;
+// Whether to stop a script that doesn't respond; without one, the user is
+// asked, Wait or Stop:
+@property (nonatomic, copy, nullable) BOOL (^stopHandler)(SGScript *script);
 // The script that last defined a tool, which the Script tool hands its events:
 @property (nonatomic, readonly, nullable) SGScript *toolScript;
 
@@ -34,6 +39,10 @@ NS_ASSUME_NONNULL_BEGIN
 // Runs the `__init__` scripts in the folders, as Glyphs starts, then calls
 // their `onStartup`:
 - (void)runInitScriptsIn:(NSArray<NSURL *> *)folders;
+// Whether to stop a script that hangs, on the main thread:
+- (BOOL)shouldStopScript:(nullable SGScript *)script;
+// Stops a script, as one that hangs is when the user asks:
+- (void)stopScript:(SGScript *)script;
 // Stops every script and the console, as VectorCraft's Stop does:
 - (void)stopAllScripts;
 // Calls the handler of every script that has it, `onEditOptions`…:

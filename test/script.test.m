@@ -379,6 +379,22 @@ int main(void) {
 		CHECK([output isEqualToArray:(@[@"kept stops"])]);
 		[output removeAllObjects];
 
+		// A script that hangs is asked about once it worked too long, and
+		// stops when it should:
+		__block NSUInteger asked = 0;
+		runtime.responseTime = 0.2;
+		runtime.stopHandler = ^BOOL(SGScript *hanging) {
+			return ++asked == 2;
+		};
+		NSURL *hang = [NSURL fileURLWithPath:file(@"hang.js",
+				@"setInterval(function() {}, 1000); while (true) {}")];
+		[runtime runScriptAtURL:hang];
+		runLoop(0.1);
+		CHECK(asked == 2);
+		CHECK(![runtime isScriptRunningAtURL:hang]);
+		runtime.stopHandler = nil;
+		runtime.responseTime = 5;
+
 		// localStorage stays with the script, sessionStorage doesn't:
 		SGScript *again = [[SGScript alloc] initWithURL:url];
 		[again execute:@
