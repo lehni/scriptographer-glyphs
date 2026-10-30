@@ -28,7 +28,7 @@ static const NSUInteger maxLines = 1000;
 }
 
 + (void)showConsole:(id)sender {
-	[[self sharedController] showWindow:sender];
+	[[self sharedController] show];
 }
 
 + (instancetype)sharedController {
@@ -41,15 +41,8 @@ static const NSUInteger maxLines = 1000;
 }
 
 - (instancetype)init {
-	NSPanel *panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 420, 300)
-			styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
-				| NSWindowStyleMaskResizable | NSWindowStyleMaskUtilityWindow
-			backing:NSBackingStoreBuffered defer:YES];
-	panel.title = @"Scriptographer Console";
-	panel.floatingPanel = YES;
-	panel.hidesOnDeactivate = YES;
-	panel.becomesKeyOnlyIfNeeded = YES;
-	self = [super initWithWindow:panel];
+	self = [super initWithTitle:@"Scriptographer Console"
+			size:NSMakeSize(420, 300)];
 	if (self) {
 		[self setupViews];
 		__weak SGConsoleController *weakSelf = self;
@@ -59,19 +52,10 @@ static const NSUInteger maxLines = 1000;
 		};
 		// Errors show, as in VectorCraft:
 		runtime.failureHandler = ^{
-			[weakSelf showWindow:nil];
+			[weakSelf show];
 		};
-		[panel center];
-		panel.frameAutosaveName = @"Scriptographer Console";
 	}
 	return self;
-}
-
-- (void)toggle {
-	if (self.window.visible)
-		[self close];
-	else
-		[self showWindow:nil];
 }
 
 - (void)setupViews {
@@ -104,19 +88,10 @@ static const NSUInteger maxLines = 1000;
 	clear.toolTip = @"Clear Console";
 	[clear.widthAnchor constraintEqualToConstant:24].active = YES;
 
-	NSStackView *stack = [NSStackView stackViewWithViews:@[inputScroll,
-			logScroll, clear]];
-	stack.orientation = NSUserInterfaceLayoutOrientationVertical;
-	stack.alignment = NSLayoutAttributeLeading;
-	stack.edgeInsets = NSEdgeInsetsMake(6, 6, 6, 6);
-	stack.spacing = 6;
 	[logScroll setContentHuggingPriority:NSLayoutPriorityDefaultLow
 			forOrientation:NSLayoutConstraintOrientationVertical];
-	self.window.contentView = stack;
-	for (NSView *view in @[inputScroll, logScroll]) {
-		[view.widthAnchor constraintEqualToAnchor:stack.widthAnchor
-				constant:-12].active = YES;
-	}
+	[self setContentViews:@[inputScroll, logScroll]
+			buttons:[NSStackView stackViewWithViews:@[clear]]];
 }
 
 - (void)appendLine:(NSString *)line {

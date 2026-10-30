@@ -67,7 +67,7 @@ build/script/script.test: test/script.test.m $(SOURCES) $(wildcard src/*.h) \
 	clang -fobjc-arc -fmodules -mmacosx-version-min=12.0 -Wall -F "$(GLYPHS)" \
 		-Wl,-rpath,"$(GLYPHS)" $(FRAMEWORKS) test/script.test.m \
 		$(filter-out src/SGScriptTool.m src/SGWindowController.m \
-			src/SGConsoleController.m,$(SOURCES)) -o $@
+			src/SGConsoleController.m src/SGPanelController.m,$(SOURCES)) -o $@
 
 # WPT's OffscreenCanvas tests, from VectorCraft's corpus, against the
 # failures VectorCraft expects (a copy of its tests/wpt-expected-failures.txt):
@@ -80,7 +80,7 @@ build/script/wpt: test/wpt.m build/script/script.test
 	clang -fobjc-arc -fmodules -mmacosx-version-min=12.0 -Wall -F "$(GLYPHS)" \
 		-Wl,-rpath,"$(GLYPHS)" $(FRAMEWORKS) test/wpt.m \
 		$(filter-out src/SGScriptTool.m src/SGWindowController.m \
-			src/SGConsoleController.m,$(SOURCES)) -o $@
+			src/SGConsoleController.m src/SGPanelController.m,$(SOURCES)) -o $@
 
 # Scriptographer's bundle and Paper.js, from scriptographer-core, which
 # VectorCraft shares:

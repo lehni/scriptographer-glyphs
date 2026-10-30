@@ -36,6 +36,7 @@
 		static dispatch_once_t once;
 		dispatch_once(&once, ^{
 			dispatch_async(dispatch_get_main_queue(), ^{
+				[SGPanelController addSections];
 				[SGWindowController addMenuItem];
 				[SGWindowController runInitScripts];
 			});

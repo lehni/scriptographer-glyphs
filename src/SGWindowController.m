@@ -48,6 +48,32 @@ static const NSUInteger maxDepth = 8;
 
 @end
 
+// A row of the tree: running scripts have their name in the accent colour,
+// the tool the Script tool stands for its pencil, but not when selected, on
+// the accent colour.
+@interface SGScriptCellView : NSTableCellView
+@property (nonatomic) BOOL isRunning;
+@property (nonatomic) BOOL isActiveTool;
+- (void)updateColors;
+@end
+
+@implementation SGScriptCellView
+
+- (void)setBackgroundStyle:(NSBackgroundStyle)style {
+	[super setBackgroundStyle:style];
+	[self updateColors];
+}
+
+- (void)updateColors {
+	BOOL isSelected = self.backgroundStyle == NSBackgroundStyleEmphasized;
+	NSColor *accent = isSelected ? nil : NSColor.controlAccentColor;
+	self.imageView.contentTintColor = self.isActiveTool ? accent : nil;
+	self.textField.textColor = self.isRunning && accent ? accent
+			: NSColor.labelColor;
+}
+
+@end
+
 @interface SGWindowController () <NSOutlineViewDataSource,
 		NSOutlineViewDelegate, NSWindowDelegate>
 @end
@@ -81,7 +107,7 @@ static const NSUInteger maxDepth = 8;
 }
 
 + (void)showScriptographer:(id)sender {
-	[[self sharedController] showWindow:sender];
+	[[self sharedController] show];
 }
 
 + (instancetype)sharedController {
@@ -94,21 +120,12 @@ static const NSUInteger maxDepth = 8;
 }
 
 - (instancetype)init {
-	NSPanel *panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 320, 560)
-			styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
-				| NSWindowStyleMaskResizable | NSWindowStyleMaskUtilityWindow
-			backing:NSBackingStoreBuffered defer:YES];
-	panel.title = @"Scriptographer";
-	panel.floatingPanel = YES;
-	panel.hidesOnDeactivate = YES;
-	panel.becomesKeyOnlyIfNeeded = YES;
-	self = [super initWithWindow:panel];
+	self = [super initWithTitle:@"Scriptographer" size:NSMakeSize(320, 560)];
 	if (self) {
-		panel.delegate = self;
+		self.window.delegate = self;
 		_items = [NSMutableDictionary dictionary];
 		_children = [NSMapTable strongToStrongObjectsMapTable];
 		[self setupViews];
-		[self setupMenu];
 		[self reloadScripts];
 		SGRuntime *runtime = [SGRuntime sharedRuntime];
 		__weak SGWindowController *weakSelf = self;
@@ -119,8 +136,6 @@ static const NSUInteger maxDepth = 8;
 		[NSNotificationCenter.defaultCenter addObserver:self
 				selector:@selector(reloadScripts)
 				name:NSApplicationDidBecomeActiveNotification object:nil];
-		[panel center];
-		panel.frameAutosaveName = @"Scriptographer";
 	}
 	return self;
 }
@@ -435,7 +450,7 @@ static const NSUInteger maxDepth = 8;
 		return [SGRuntime sharedRuntime].toolScript != nil;
 	if (item.action == @selector(removeFolder:))
 		return [self isAddedFolder:[self selectedItem]];
-	return YES;
+	return [super validateMenuItem:item];
 }
 
 - (void)updateButtons {
@@ -475,9 +490,12 @@ static const NSUInteger maxDepth = 8;
 	_outlineView.doubleAction = @selector(editScript:);
 	_outlineView.style = NSTableViewStyleSourceList;
 	_outlineView.floatsGroupRows = NO;
+	// On the window's or the sidebar's background:
+	_outlineView.backgroundColor = NSColor.clearColor;
 	NSScrollView *scriptsScroll = [[NSScrollView alloc] init];
 	scriptsScroll.documentView = _outlineView;
 	scriptsScroll.hasVerticalScroller = YES;
+	scriptsScroll.drawsBackground = NO;
 
 	// Scriptographer's buttons, in its groups: execute and stop, edit and show,
 	// new script and folder, and the console on the right.
@@ -505,25 +523,11 @@ static const NSUInteger maxDepth = 8;
 	[buttons setCustomSpacing:10 afterView:buttons.views[3]];
 	[buttons setCustomSpacing:10 afterView:buttons.views[5]];
 
-	NSStackView *stack = [NSStackView stackViewWithViews:@[scriptsScroll,
-			buttons]];
-	stack.orientation = NSUserInterfaceLayoutOrientationVertical;
-	stack.alignment = NSLayoutAttributeLeading;
-	stack.edgeInsets = NSEdgeInsetsMake(6, 6, 6, 6);
-	stack.spacing = 6;
-	self.window.contentView = stack;
-	[scriptsScroll.widthAnchor constraintEqualToAnchor:stack.widthAnchor
-			constant:-12].active = YES;
+	[self setContentViews:@[scriptsScroll] buttons:buttons];
 }
 
-// The panel's menu, in its title bar: the folders, and the reference.
-- (void)setupMenu {
-	NSPopUpButton *button = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 36, 22)
-			pullsDown:YES];
-	button.bordered = NO;
-	NSMenu *menu = button.menu;
-	NSMenuItem *title = [menu addItemWithTitle:@"" action:nil keyEquivalent:@""];
-	title.image = [NSImage imageNamed:NSImageNameActionTemplate];
+// The panel's menu: the folders, and the reference.
+- (void)addMenuItems:(NSMenu *)menu {
 	[menu addItemWithTitle:@"Add Folder…" action:@selector(addFolder:)
 			keyEquivalent:@""].target = self;
 	[menu addItemWithTitle:@"Remove Folder" action:@selector(removeFolder:)
@@ -534,11 +538,6 @@ static const NSUInteger maxDepth = 8;
 	[menu addItem:[NSMenuItem separatorItem]];
 	[menu addItemWithTitle:@"Paper.js Reference"
 			action:@selector(openReference:) keyEquivalent:@""].target = self;
-	NSTitlebarAccessoryViewController *accessory =
-			[[NSTitlebarAccessoryViewController alloc] init];
-	accessory.view = button;
-	accessory.layoutAttribute = NSLayoutAttributeTrailing;
-	[self.window addTitlebarAccessoryViewController:accessory];
 }
 
 #pragma mark - NSOutlineViewDataSource
@@ -561,10 +560,10 @@ static const NSUInteger maxDepth = 8;
 
 - (NSView *)outlineView:(NSOutlineView *)outlineView
 		viewForTableColumn:(NSTableColumn *)column item:(id)item {
-	NSTableCellView *cell = [outlineView makeViewWithIdentifier:@"item"
+	SGScriptCellView *cell = [outlineView makeViewWithIdentifier:@"item"
 			owner:self];
 	if (!cell) {
-		cell = [[NSTableCellView alloc] init];
+		cell = [[SGScriptCellView alloc] init];
 		cell.identifier = @"item";
 		NSImageView *image = [[NSImageView alloc] init];
 		NSTextField *field = [NSTextField labelWithString:@""];
@@ -587,7 +586,7 @@ static const NSUInteger maxDepth = 8;
 	}
 	SGRuntime *runtime = [SGRuntime sharedRuntime];
 	NSString *symbol;
-	NSColor *tint = nil, *color = NSColor.labelColor;
+	cell.isRunning = cell.isActiveTool = NO;
 	if ([item isKindOfClass:[SGFolder class]]) {
 		cell.textField.stringValue = [item name];
 		symbol = [item isSealed] ? @"lock" : @"folder";
@@ -598,19 +597,14 @@ static const NSUInteger maxDepth = 8;
 		NSURL *url = item;
 		cell.textField.stringValue =
 				url.lastPathComponent.stringByDeletingPathExtension;
-		// Tool scripts have a pencil, the one the Script tool stands for a
-		// coloured one, running scripts their name in the accent colour:
-		BOOL isActiveTool = [url isEqual:runtime.toolScript.url];
-		symbol = isActiveTool || [self isTool:url] ? @"pencil" : @"doc";
-		if (isActiveTool)
-			tint = NSColor.controlAccentColor;
-		if ([runtime isScriptRunningAtURL:url])
-			color = NSColor.controlAccentColor;
+		// Tool scripts have a pencil:
+		cell.isActiveTool = [url isEqual:runtime.toolScript.url];
+		cell.isRunning = [runtime isScriptRunningAtURL:url];
+		symbol = cell.isActiveTool || [self isTool:url] ? @"pencil" : @"doc";
 	}
 	cell.imageView.image = [NSImage imageWithSystemSymbolName:symbol
 			accessibilityDescription:nil];
-	cell.imageView.contentTintColor = tint;
-	cell.textField.textColor = color;
+	[cell updateColors];
 	return cell;
 }
 
