@@ -8,6 +8,25 @@
 
 static const NSUInteger maxLines = 1000;
 
+// The divider between the input and the log: as wide as the gaps between the
+// panel's views, with a grip in the middle, as the sidebar's sections have.
+@interface SGConsoleSplitView : NSSplitView
+@end
+
+@implementation SGConsoleSplitView
+
+- (CGFloat)dividerThickness {
+	return 6;
+}
+
+- (void)drawDividerInRect:(NSRect)rect {
+	NSRect grip = NSMakeRect(NSMidX(rect) - 12, NSMidY(rect) - 1, 24, 2);
+	[NSColor.tertiaryLabelColor setFill];
+	[[NSBezierPath bezierPathWithRoundedRect:grip xRadius:1 yRadius:1] fill];
+}
+
+@end
+
 @interface SGConsoleController () <NSTextViewDelegate>
 @end
 
@@ -62,7 +81,7 @@ static const NSUInteger maxLines = 1000;
 	NSFont *font = [NSFont monospacedSystemFontOfSize:11
 			weight:NSFontWeightRegular];
 	// The input, two lines high at first, and at least one, over the log,
-	// with the divider between them to resize it:
+	// with the divider between them to resize it, which the log follows:
 	CGFloat lineHeight = ceil(font.ascender - font.descender + font.leading);
 	NSScrollView *inputScroll = [NSTextView scrollableTextView];
 	_inputView = inputScroll.documentView;
@@ -72,10 +91,7 @@ static const NSUInteger maxLines = 1000;
 	_inputView.automaticDashSubstitutionEnabled = NO;
 	_inputView.delegate = self;
 	inputScroll.borderType = NSBezelBorder;
-	NSLayoutConstraint *height = [inputScroll.heightAnchor
-			constraintEqualToConstant:lineHeight * 2 + 8];
-	height.priority = NSLayoutPriorityDefaultLow;
-	height.active = YES;
+	inputScroll.frame = NSMakeRect(0, 0, 100, lineHeight * 2 + 8);
 	[inputScroll.heightAnchor constraintGreaterThanOrEqualToConstant:
 			lineHeight + 8].active = YES;
 
@@ -88,13 +104,12 @@ static const NSUInteger maxLines = 1000;
 	[logScroll.heightAnchor constraintGreaterThanOrEqualToConstant:
 			lineHeight * 3 + 8].active = YES;
 
-	NSSplitView *split = [[NSSplitView alloc] init];
-	split.dividerStyle = NSSplitViewDividerStyleThin;
+	NSSplitView *split = [[SGConsoleSplitView alloc] init];
 	[split addArrangedSubview:inputScroll];
 	[split addArrangedSubview:logScroll];
-	// Resizing the panel resizes the log:
-	[split setHoldingPriority:NSLayoutPriorityDefaultLow + 1
-			forSubviewAtIndex:0];
+	// The log takes the height that the input leaves, also as the panel
+	// resizes:
+	[split setHoldingPriority:1 forSubviewAtIndex:1];
 	split.autosaveName = @"Scriptographer Console Input";
 
 	// The bottom bar, with Clear Console, Scriptographer's refresh arrows:
@@ -106,8 +121,6 @@ static const NSUInteger maxLines = 1000;
 	clear.toolTip = @"Clear Console";
 	[clear.widthAnchor constraintEqualToConstant:24].active = YES;
 
-	[split setContentHuggingPriority:NSLayoutPriorityDefaultLow
-			forOrientation:NSLayoutConstraintOrientationVertical];
 	[self setContentViews:@[split]
 			buttons:[NSStackView stackViewWithViews:@[clear]]];
 }
