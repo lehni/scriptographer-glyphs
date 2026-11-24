@@ -55,14 +55,15 @@ var colors = {
 	ghost: 'rgba(16, 96, 255, 0.4)'
 };
 
-// The skeleton that the tool edits, its stop that's selected, the stop under
-// the mouse that dragging out would add, and the view's points per unit of
-// the glyph, as the overlay last drew them:
+// The skeleton that the tool edits, the index of its stop that's selected,
+// the stop under the mouse that dragging out would add, and the view's points
+// per unit of the glyph, as the overlay last drew them. Stops and segments go
+// by their indices, as the skeleton loads them again when the app changes it:
 var skeleton = null;
 var selected = null;
 var hover = null;
 var zoom = 1;
-// What the mouse drags: { type, stop } of a stop, { type, segment } of the
+// What the mouse drags: { type, index } of a stop or a segment of the
 // skeleton, or the new skeleton it draws:
 var drag = null;
 var drawing = null;
@@ -115,17 +116,22 @@ function getStops(path) {
 	});
 }
 
-// Makes the path the skeleton that the tool edits. Its stroke profile shows
-// the stops, from the effect's, which it loses when it's changed elsewhere:
+// The path's stroke profile shows the pens: the effect's stops, the one place
+// that keeps them. The path loses its own when it loads again:
+function loadStops(path) {
+	var stops = getProfile(path).stops;
+	if (!(path.strokeProfile || []).length && stops.length)
+		path.strokeProfile = stops;
+}
+
+// Makes the path the skeleton that the tool edits:
 function edit(path) {
 	if (skeleton && skeleton !== path)
 		skeleton.onDraw = null;
 	skeleton = path;
 	selected = null;
 	if (path) {
-		var stops = getProfile(path).stops;
-		if (!(path.strokeProfile || []).length && stops.length)
-			path.strokeProfile = stops;
+		loadStops(path);
 		path.onDraw = drawStops;
 	}
 	updatePalette();
@@ -239,10 +245,23 @@ function drawMarker(ctx, matrix, pen, stop, isSelected) {
 	drawSquare(center + minor, size * 2 / 3, angle);
 }
 
-// Draws the skeleton's points and handles, which the app hides while the
-// tool is active:
+// Draws the skeleton's line, points and handles, which the app may hide while
+// the tool is active, or draw the effect in their place:
 function drawSegments(ctx, matrix) {
 	ctx.lineWidth = 1;
+	ctx.strokeStyle = '#222';
+	ctx.beginPath();
+	skeleton.curves.forEach(function(curve) {
+		var point1 = matrix.transform(curve.point1),
+			handle1 = matrix.transform(curve.point1 + curve.handle1),
+			handle2 = matrix.transform(curve.point2 + curve.handle2),
+			point2 = matrix.transform(curve.point2);
+		if (!curve.index)
+			ctx.moveTo(point1.x, point1.y);
+		ctx.bezierCurveTo(handle1.x, handle1.y, handle2.x, handle2.y,
+				point2.x, point2.y);
+	});
+	ctx.stroke();
 	ctx.strokeStyle = ctx.fillStyle = '#222';
 	skeleton.segments.forEach(function(segment) {
 		var point = matrix.transform(segment.point);
@@ -268,12 +287,13 @@ function drawStops(event) {
 	var ctx = event.context,
 		matrix = event.matrix;
 	zoom = matrix.scaling.x;
+	loadStops(skeleton);
 	matrix.inverted().applyToContext(ctx);
 	drawSegments(ctx, matrix);
 	if (values.showStops) {
-		(skeleton.strokeProfile || []).forEach(function(stop) {
+		(skeleton.strokeProfile || []).forEach(function(stop, index) {
 			drawMarker(ctx, matrix, getPen(stop.offset, getFullStop(stop)),
-					stop, stop === selected);
+					stop, index === selected);
 		});
 	}
 	if (hover)
@@ -291,11 +311,11 @@ function hitStop(point) {
 		var stop = stops[i],
 			pen = getPen(stop.offset, getFullStop(stop));
 		if (point.getDistance(pen.point + pen.major) < tolerance)
-			return { type: 'width', stop: stop };
+			return { type: 'width', index: i };
 		if (point.getDistance(pen.point + pen.minor) < tolerance)
-			return { type: 'aspect', stop: stop };
+			return { type: 'aspect', index: i };
 		if (point.getDistance(pen.point) < tolerance)
-			return { type: 'stop', stop: stop };
+			return { type: 'stop', index: i };
 	}
 	return null;
 }
@@ -317,8 +337,7 @@ function hitSkeleton(point) {
 		var item = items[i],
 			profile = getProfile(item);
 		if (profile) {
-			if (!(item.strokeProfile || []).length && profile.stops.length)
-				item.strokeProfile = profile.stops;
+			loadStops(item);
 			var location = item.getNearestLocation(point),
 				pen = item.getStrokeProfileAt(location.offset);
 			if (location.point.getDistance(point)
@@ -353,6 +372,8 @@ function hitStroke(point) {
 // Mouse and keys
 
 function onMouseMove(event) {
+	if (skeleton)
+		loadStops(skeleton);
 	var location = skeleton && !hitStop(event.point)
 			&& !hitSegments(event.point) && hitStroke(event.point);
 	hover = location ? { offset: location.offset } : null;
@@ -367,16 +388,17 @@ function onMouseDown(event) {
 		edit(skeleton);
 	var hit = skeleton && hitStop(event.point);
 	if (hit) {
-		var stop = hit.stop;
+		var index = hit.index;
 		if (hit.type === 'stop' && event.modifiers.alt) {
 			// Copy the stop and drag the copy, as in Illustrator:
-			stop = stop.clone();
-			skeleton.strokeProfile = skeleton.strokeProfile.concat(stop);
+			var copy = skeleton.strokeProfile[index].clone();
+			skeleton.strokeProfile = skeleton.strokeProfile.concat(copy);
+			index = skeleton.strokeProfile.indexOf(copy);
 		}
-		drag = { type: hit.type, stop: stop };
-		selected = stop;
+		drag = { type: hit.type, index: index };
+		selected = index;
 	} else if (skeleton && (hit = hitSegments(event.point))) {
-		drag = { type: hit.type, segment: hit.segment };
+		drag = { type: hit.type, index: hit.segment.index };
 	} else if (skeleton && (hit = hitStroke(event.point))) {
 		// Dragging out from the stroke adds a stop there, with the width
 		// that the profile has there, and changes it:
@@ -385,8 +407,8 @@ function onMouseDown(event) {
 			width: skeleton.getStrokeProfileAt(hit.offset).width
 		});
 		skeleton.strokeProfile = (skeleton.strokeProfile || []).concat(added);
-		drag = { type: 'width', stop: added, keepAngle: true };
-		selected = added;
+		selected = skeleton.strokeProfile.indexOf(added);
+		drag = { type: 'width', index: selected, keepAngle: true };
 		update();
 	} else if ((hit = hitSkeleton(event.point))) {
 		edit(hit);
@@ -405,7 +427,8 @@ function onMouseDrag(event) {
 	}
 	if (!drag)
 		return;
-	var stop = drag.stop,
+	loadStops(skeleton);
+	var stop = skeleton.strokeProfile && skeleton.strokeProfile[drag.index],
 		width = getProfile(skeleton).width;
 	if (drag.type === 'width') {
 		var pen = getPen(stop.offset, getFullStop(stop)),
@@ -427,6 +450,8 @@ function onMouseDrag(event) {
 		stop.aspect = Math.round(height.length / pen.major.length * 100) / 100;
 	} else if (drag.type === 'stop') {
 		stop.offset = skeleton.getNearestLocation(event.point).offset;
+		// Moving past another stop changes their order:
+		drag.index = selected = skeleton.strokeProfile.indexOf(stop);
 	} else {
 		var name = {
 			'segment': 'point',
@@ -434,7 +459,7 @@ function onMouseDrag(event) {
 			'handle-out': 'handleOut'
 		}[drag.type];
 		if (name)
-			drag.segment[name] += event.delta;
+			skeleton.segments[drag.index][name] += event.delta;
 	}
 	update();
 }
@@ -453,9 +478,12 @@ function onMouseUp(event) {
 }
 
 function onKeyDown(event) {
-	if ((event.key === 'backspace' || event.key === 'delete') && selected) {
-		skeleton.strokeProfile = skeleton.strokeProfile.filter(function(stop) {
-			return stop !== selected;
+	if ((event.key === 'backspace' || event.key === 'delete')
+			&& selected != null) {
+		loadStops(skeleton);
+		skeleton.strokeProfile = skeleton.strokeProfile.filter(
+				function(stop, index) {
+			return index !== selected;
 		});
 		selected = null;
 		update();
