@@ -61,7 +61,9 @@ static const NSUInteger maxLines = 1000;
 - (void)setupViews {
 	NSFont *font = [NSFont monospacedSystemFontOfSize:11
 			weight:NSFontWeightRegular];
-	// The input, two lines high:
+	// The input, two lines high at first, and at least one, over the log,
+	// with the divider between them to resize it:
+	CGFloat lineHeight = ceil(font.ascender - font.descender + font.leading);
 	NSScrollView *inputScroll = [NSTextView scrollableTextView];
 	_inputView = inputScroll.documentView;
 	_inputView.font = font;
@@ -70,14 +72,30 @@ static const NSUInteger maxLines = 1000;
 	_inputView.automaticDashSubstitutionEnabled = NO;
 	_inputView.delegate = self;
 	inputScroll.borderType = NSBezelBorder;
-	[inputScroll.heightAnchor constraintEqualToConstant:
-			ceil(font.ascender - font.descender + font.leading) * 2 + 8]
-			.active = YES;
+	NSLayoutConstraint *height = [inputScroll.heightAnchor
+			constraintEqualToConstant:lineHeight * 2 + 8];
+	height.priority = NSLayoutPriorityDefaultLow;
+	height.active = YES;
+	[inputScroll.heightAnchor constraintGreaterThanOrEqualToConstant:
+			lineHeight + 8].active = YES;
 
+	// The log keeps a few lines, so neither the divider nor the sidebar can
+	// hide it:
 	NSScrollView *logScroll = [NSTextView scrollableTextView];
 	_logView = logScroll.documentView;
 	_logView.editable = NO;
 	_logView.font = font;
+	[logScroll.heightAnchor constraintGreaterThanOrEqualToConstant:
+			lineHeight * 3 + 8].active = YES;
+
+	NSSplitView *split = [[NSSplitView alloc] init];
+	split.dividerStyle = NSSplitViewDividerStyleThin;
+	[split addArrangedSubview:inputScroll];
+	[split addArrangedSubview:logScroll];
+	// Resizing the panel resizes the log:
+	[split setHoldingPriority:NSLayoutPriorityDefaultLow + 1
+			forSubviewAtIndex:0];
+	split.autosaveName = @"Scriptographer Console Input";
 
 	// The bottom bar, with Clear Console, Scriptographer's refresh arrows:
 	NSButton *clear = [NSButton buttonWithImage:[NSImage
@@ -88,9 +106,9 @@ static const NSUInteger maxLines = 1000;
 	clear.toolTip = @"Clear Console";
 	[clear.widthAnchor constraintEqualToConstant:24].active = YES;
 
-	[logScroll setContentHuggingPriority:NSLayoutPriorityDefaultLow
+	[split setContentHuggingPriority:NSLayoutPriorityDefaultLow
 			forOrientation:NSLayoutConstraintOrientationVertical];
-	[self setContentViews:@[inputScroll, logScroll]
+	[self setContentViews:@[split]
 			buttons:[NSStackView stackViewWithViews:@[clear]]];
 }
 
