@@ -124,6 +124,14 @@ function loadStops(path) {
 		path.strokeProfile = stops;
 }
 
+// The skeleton that the tool edits, letting go of it once the app removed it
+// or its effect:
+function getSkeleton() {
+	if (skeleton && (!skeleton.isInserted() || !getProfile(skeleton)))
+		edit(null);
+	return skeleton;
+}
+
 // Makes the path the skeleton that the tool edits:
 function edit(path) {
 	if (skeleton && skeleton !== path)
@@ -287,6 +295,8 @@ function drawStops(event) {
 	var ctx = event.context,
 		matrix = event.matrix;
 	zoom = matrix.scaling.x;
+	if (!getSkeleton())
+		return;
 	loadStops(skeleton);
 	matrix.inverted().applyToContext(ctx);
 	drawSegments(ctx, matrix);
@@ -372,7 +382,7 @@ function hitStroke(point) {
 // Mouse and keys
 
 function onMouseMove(event) {
-	if (skeleton)
+	if (getSkeleton())
 		loadStops(skeleton);
 	var location = skeleton && !hitStop(event.point)
 			&& !hitSegments(event.point) && hitStroke(event.point);
@@ -382,9 +392,7 @@ function onMouseMove(event) {
 function onMouseDown(event) {
 	drag = null;
 	hover = null;
-	if (skeleton && !skeleton.isInserted())
-		edit(null);
-	if (skeleton)
+	if (getSkeleton())
 		edit(skeleton);
 	var hit = skeleton && hitStop(event.point);
 	if (hit) {
@@ -425,7 +433,7 @@ function onMouseDrag(event) {
 		drawing.add(event.point);
 		return;
 	}
-	if (!drag)
+	if (!drag || !getSkeleton())
 		return;
 	loadStops(skeleton);
 	var stop = skeleton.strokeProfile && skeleton.strokeProfile[drag.index],
@@ -479,7 +487,7 @@ function onMouseUp(event) {
 
 function onKeyDown(event) {
 	if ((event.key === 'backspace' || event.key === 'delete')
-			&& selected != null) {
+			&& selected != null && getSkeleton()) {
 		loadStops(skeleton);
 		skeleton.strokeProfile = skeleton.strokeProfile.filter(
 				function(stop, index) {
@@ -505,7 +513,7 @@ var components = {
 		label: 'Profile',
 		options: Object.keys(profiles),
 		onChange: function() {
-			if (skeleton)
+			if (getSkeleton())
 				applyProfile(skeleton);
 		}
 	},
@@ -514,7 +522,7 @@ var components = {
 		steppers: true,
 		min: 1,
 		onChange: function(value) {
-			if (skeleton)
+			if (getSkeleton())
 				getProfile(skeleton).width = value;
 		}
 	},
