@@ -1,14 +1,17 @@
 // Draws strokes along skeleton paths with pens that change their width, aspect
-// and angle along the way, as Paper.js's stroke profiles, and writes their
-// outlines next to them. Each skeleton keeps its profile in its data, and its
-// outline the skeleton's id, so the tool picks up where it left off.
+// and angle along the way, as Paper.js's stroke profiles. Each skeleton keeps
+// its profile in a live effect, Stroke Profile, which draws its outline
+// beneath it, and draws it again whenever the skeleton changes, also with the
+// app's own tools, while the script runs.
 //
-// Draw a skeleton in the empty space, or click one to edit it. Drag out from
-// the stroke to add a stop. Drag the round handle of a stop to change its
-// width and angle, with Shift only its width, the square one to change its
-// aspect, and the stop itself to move it along the path. Alt-drag copies a
-// stop, Delete removes the selected one. The skeleton's points and handles
-// drag too, and the stops stay between the same points.
+// Draw a skeleton in the empty space, or click one to edit it. Clicking any
+// other path, as drawn with the app's own tools, gives it the profile chosen
+// in the palette and makes it a skeleton. Drag out from the stroke to add a
+// stop. Drag the round handle of a stop to change its width and angle, with
+// Shift only its width, the square one to change its aspect, and the stop
+// itself to move it along the path. Alt-drag copies a stop, Delete removes the
+// selected one. The skeleton's points and handles drag too, and the stops stay
+// between the same points.
 
 ////////////////////////////////////////////////////////////////////////////////
 // Values
@@ -65,24 +68,38 @@ var drag = null;
 var drawing = null;
 
 ////////////////////////////////////////////////////////////////////////////////
-// Skeletons and their outlines
+// The effect
 
-// The profile that a skeleton keeps in its data: { id, width, stops }, with
-// the stops' offsets along it.
+// The outline of the area that the pens of the profile sweep along the path:
+new Effect({
+	type: 'stroke-profile',
+	label: 'Stroke Profile',
+	parameters: {
+		width: { label: 'Width', type: 'number', value: 60 },
+		stops: { value: [] }
+	},
+	onApply: function(event) {
+		var art = event.art;
+		art.set({
+			strokeColor: 'black',
+			strokeWidth: this.width,
+			strokeCap: 'round',
+			strokeJoin: 'round',
+			strokeProfile: this.stops
+		});
+		return art.outline({ insert: false });
+	}
+});
+
+////////////////////////////////////////////////////////////////////////////////
+// Skeletons
+
+// The skeleton's use of the effect, with its width and its stops, at their
+// offsets along it, or null:
 function getProfile(item) {
-	return item.data.strokeProfile;
-}
-
-function getSkeleton(id) {
-	return project.activeLayer.children.filter(function(item) {
-		return getProfile(item) && getProfile(item).id === id;
-	})[0];
-}
-
-function getOutlines(id) {
-	return project.activeLayer.children.filter(function(item) {
-		return item.data.outlineOf === id;
-	});
+	return item.effects.filter(function(effect) {
+		return effect.type === 'stroke-profile';
+	})[0] || null;
 }
 
 function getStops(path) {
@@ -98,8 +115,8 @@ function getStops(path) {
 	});
 }
 
-// Makes the path the skeleton that the tool edits, with its profile, which
-// it loses when it's changed elsewhere:
+// Makes the path the skeleton that the tool edits. Its stroke profile shows
+// the stops, from the effect's, which it loses when it's changed elsewhere:
 function edit(path) {
 	if (skeleton && skeleton !== path)
 		skeleton.onDraw = null;
@@ -114,16 +131,9 @@ function edit(path) {
 	updatePalette();
 }
 
-// Gives the path the profile chosen in the palette, as a skeleton that keeps
-// its id once it has one:
+// Gives the path the profile chosen in the palette, as a skeleton:
 function applyProfile(path) {
 	var length = path.length;
-	path.data.strokeProfile = {
-		id: getProfile(path) ? getProfile(path).id
-				: Math.random().toString(36).slice(2),
-		width: values.width,
-		stops: []
-	};
 	path.strokeProfile = profiles[values.profile].map(function(entry) {
 		return {
 			offset: entry.at * length,
@@ -132,34 +142,16 @@ function applyProfile(path) {
 			angle: entry.angle
 		};
 	});
+	if (!getProfile(path))
+		path.addEffect({ type: 'stroke-profile' });
+	getProfile(path).width = values.width;
 	edit(path);
 	update();
 }
 
-// Keeps the skeleton's profile in its data, and outlines it again, beneath
-// it. The stroke that's outlined is a copy, so the skeleton keeps its own
-// style:
+// Keeps the stops in the effect, which draws the outline again:
 function update() {
-	var profile = getProfile(skeleton);
-	profile.stops = getStops(skeleton);
-	getOutlines(profile.id).forEach(function(item) {
-		item.remove();
-	});
-	var stroke = skeleton.clone({ insert: false });
-	stroke.set({
-		data: {},
-		strokeColor: 'black',
-		strokeWidth: profile.width,
-		strokeCap: 'round',
-		strokeJoin: 'round'
-	});
-	var outline = stroke.outline({ insert: false });
-	outline.set({ fillColor: 'black', strokeColor: null, selected: false });
-	// Glyphs keeps the paths of compound paths, each with its data:
-	outline.getItems({ class: Path }).concat(outline).forEach(function(item) {
-		item.data = { outlineOf: profile.id };
-	});
-	outline.insertBelow(skeleton);
+	getProfile(skeleton).stops = getStops(skeleton);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -316,16 +308,35 @@ function hitSegments(point) {
 	});
 }
 
-// The skeleton whose outline or path is at the point:
+// The skeleton whose stroke is at the point, within half its pen's width
+// where it's nearest, and the tolerance beyond, which covers what its effect
+// draws, so it isn't taken for another path:
 function hitSkeleton(point) {
 	var items = project.activeLayer.children;
 	for (var i = items.length - 1; i >= 0; i--) {
 		var item = items[i],
-			id = item.data.outlineOf;
-		if (id && item.contains(point))
-			return getSkeleton(id);
-		if (getProfile(item)
-				&& item.hitTest(point, { stroke: true, tolerance: 4 / zoom }))
+			profile = getProfile(item);
+		if (profile) {
+			if (!(item.strokeProfile || []).length && profile.stops.length)
+				item.strokeProfile = profile.stops;
+			var location = item.getNearestLocation(point),
+				pen = item.getStrokeProfileAt(location.offset);
+			if (location.point.getDistance(point)
+					<= profile.width * pen.width / 2 + 4 / zoom)
+				return item;
+		}
+	}
+	return null;
+}
+
+// Any other path at the point, which can become a skeleton. Paths in the
+// app may have no stroke to hit, so it's by their nearest point:
+function hitPath(point) {
+	var items = project.activeLayer.children;
+	for (var i = items.length - 1; i >= 0; i--) {
+		var item = items[i];
+		if (item instanceof Path && !getProfile(item) && item.length
+				&& item.getNearestPoint(point).getDistance(point) <= 4 / zoom)
 			return item;
 	}
 	return null;
@@ -379,6 +390,8 @@ function onMouseDown(event) {
 		update();
 	} else if ((hit = hitSkeleton(event.point))) {
 		edit(hit);
+	} else if ((hit = hitPath(event.point))) {
+		applyProfile(hit);
 	} else {
 		edit(null);
 		drawing = new Path({ segments: [event.point] });
@@ -473,10 +486,8 @@ var components = {
 		steppers: true,
 		min: 1,
 		onChange: function(value) {
-			if (skeleton) {
+			if (skeleton)
 				getProfile(skeleton).width = value;
-				update();
-			}
 		}
 	},
 	showStops: {
