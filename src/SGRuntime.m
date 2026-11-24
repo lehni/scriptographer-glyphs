@@ -188,12 +188,16 @@ static NSString *const effectOfKey = @"com.scriptographer.effectOf";
 	[path setUserData:string.length ? string : nil forKey:key];
 }
 
-// The data and effects of an edit. A path without effects loses what they
-// drew:
+// The data and effects of an edit. A path with effects is hidden: Glyphs
+// shows it pale, and only what they draw is outline. One without loses what
+// they drew:
 - (void)setDataAndEffects:(NSDictionary *)edit ofPath:(GSPath *)path {
 	[self setString:edit[@"data"] forKey:dataKey ofPath:path];
 	[self setString:edit[@"effects"] forKey:effectsKey ofPath:path];
-	if (![path userDataForKey:effectsKey])
+	BOOL hasEffects = [path userDataForKey:effectsKey] != nil;
+	if (path.hidden != hasEffects)
+		path.hidden = hasEffects;
+	if (!hasEffects)
 		[self removeEffectOutputOfPath:path];
 }
 

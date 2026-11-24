@@ -591,6 +591,23 @@ int main(void) {
 		runtime.toolLayer = nil;
 		[runtime stopAllScripts];
 
+		// Paths with effects are hidden, so only what the effects draw is
+		// outline, and shown again without:
+		NSDictionary *entry = [[runtime dataOfLayer:layer][@"paths"]
+				filteredArrayUsingPredicate:[NSPredicate
+					predicateWithFormat:@"effects != nil"]].firstObject;
+		NSMutableDictionary *change = [@{
+			@"key": entry[@"key"],
+			@"nodes": entry[@"nodes"],
+			@"closed": entry[@"closed"],
+			@"effects": entry[@"effects"]
+		} mutableCopy];
+		[runtime setPaths:@[change] layerKey:[runtime dataOfLayer:layer][@"key"]];
+		CHECK(path.hidden);
+		change[@"effects"] = @"";
+		[runtime setPaths:@[change] layerKey:[runtime dataOfLayer:layer][@"key"]];
+		CHECK(!path.hidden && layer.shapes.count == 1);
+
 		// localStorage stays with the script, sessionStorage doesn't:
 		SGScript *again = [[SGScript alloc] initWithURL:url];
 		[again execute:@
