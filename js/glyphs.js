@@ -11,13 +11,18 @@
  * natives as `__glyphs`, in Glyphs' coordinates:
  *
  * - `getLayer()` returns the active layer as `{ key, paths }`, with paths as
- *   `{ key, closed, nodes, selection }`, nodes flat as `x, y, type,
- *   connection` and the indices of the selected ones, or `null` without one.
+ *   `{ key, closed, nodes, selection, data, effects, effectsInput }`, nodes
+ *   flat as `x, y, type, connection` and the indices of the selected ones,
+ *   `data` and `effects` as JSON, and the input that the effects last drew,
+ *   or `null` without one.
  * - `setSelection(layerKey, selection)` selects the nodes of the paths,
  *   `{ key: indices }`, and nothing else.
- * - `setPaths(layerKey, edits)` applies edits `{ key, nodes, closed }`, `{ key,
- *   remove: true }` and `{ nodes, closed }` for new paths, in one undo step,
- *   and returns the keys of the new paths in order.
+ * - `setPaths(layerKey, edits)` applies edits `{ key, nodes, closed, data,
+ *   effects }`, `{ key, remove: true }` and `{ nodes, closed, data, effects }`
+ *   for new paths, in one undo step, and returns the keys of the new paths in
+ *   order.
+ * - `setEffectOutput(key, input, outputs)` replaces what the path's effects
+ *   drew with the paths `{ nodes, closed }`, and keeps their `input`.
  * - `setTimer(delay, repeat, callback)` and `clearTimer(id)`, which keep the
  *   script running while they're set.
  * - `bindView()`, which makes the canvas made last the overlay's, drawing
@@ -226,8 +231,11 @@ var Scriptographer = new function() {
                 nodes: path.nodes,
                 selection: path.selection,
                 data: path.data,
+                effects: path.effects,
+                effectsInput: path.effectsInput,
                 signature: path.closed + ':' + path.nodes.join(',') + ':'
                         + path.selection.join(',') + ':' + (path.data || '')
+                        + ':' + (path.effects || '')
             };
         });
         snapshots[data.key] = snapshot;
@@ -276,6 +284,8 @@ var Scriptographer = new function() {
                 };
                 if (path.data)
                     props.data = JSON.parse(path.data);
+                if (path.effects)
+                    props.effects = JSON.parse(path.effects);
                 return ['Path', props];
             },
 
@@ -436,6 +446,81 @@ var Scriptographer = new function() {
         return data && Object.keys(data).length ? JSON.stringify(data) : '';
     }
 
+    // The effects of a path as Glyphs keeps them, as JSON, or '' without any:
+    function getEffects(path) {
+        var effects = path.effects;
+        return effects.length ? JSON.stringify(effects.map(function(effect) {
+            var props = { type: effect.type, parameters: effect.parameters };
+            if (!effect.visible)
+                props.visible = false;
+            return props;
+        })) : '';
+    }
+
+    // The input of a path's effects: what they draw changes along with it.
+    function getEffectsInput(path) {
+        return path.closed + ':' + path.nodes.join(',') + ':' + path.effects;
+    }
+
+    // The inputs that effects failed to draw, by the keys of their paths,
+    // which they don't try again:
+    var failedInputs = {};
+
+    // Draws the effects of the snapshot's paths that the script knows, where
+    // their input changed, with the bundle's `applyEffect()`, one after the
+    // other, and has Glyphs keep what they draw:
+    function applyEffects(snapshot, applyEffect) {
+        snapshot.keys.forEach(function(key) {
+            var path = snapshot.paths[key],
+                input = path.effects && getEffectsInput(path);
+            if (!input || input === path.effectsInput
+                    || input === failedInputs[key])
+                return;
+            var effects = JSON.parse(path.effects).filter(function(effect) {
+                return effect.visible !== false;
+            });
+            // Effects of other scripts are theirs to draw:
+            if (!effects.every(function(effect) {
+                return scope.Effect.get(effect.type);
+            }))
+                return;
+            try {
+                var art = JSON.stringify(['Path', {
+                    segments: getSegments(path.nodes, path.closed),
+                    closed: path.closed
+                }]);
+                effects.forEach(function(effect) {
+                    art = applyEffect(scope, effect.type,
+                            effect.parameters || {}, art, key);
+                });
+                natives.setEffectOutput(key, input, getOutputs(art));
+            } catch (e) {
+                failedInputs[key] = input;
+                report(e);
+            }
+        });
+    }
+
+    // The paths of what effects draw, Paper.js JSON, as Glyphs keeps them:
+    function getOutputs(art) {
+        var settings = scope.settings,
+            insertItems = settings.insertItems;
+        settings.insertItems = false;
+        try {
+            var item = scope.Base.importJSON(art),
+                paths = item instanceof paper.Path ? [item]
+                    : item.getItems({ class: paper.Path });
+            return paths.map(function(path) {
+                return {
+                    nodes: getNodes(path, getLayerMatrix(path, null)),
+                    closed: path.closed
+                };
+            });
+        } finally {
+            settings.insertItems = insertItems;
+        }
+    }
+
     function commitProject(project, layerKey) {
         var layer = project.layers[0],
             changes = project.takeChanges(),
@@ -466,7 +551,8 @@ var Scriptographer = new function() {
                 var edit = {
                     nodes: getNodes(child, getLayerMatrix(child, layer)),
                     closed: child.closed,
-                    data: getData(child)
+                    data: getData(child),
+                    effects: getEffects(child)
                 };
                 if (child.key != null) {
                     edit.key = child.key;
@@ -485,7 +571,8 @@ var Scriptographer = new function() {
                         edits.push({
                             nodes: nodes,
                             closed: path.closed,
-                            data: getData(path)
+                            data: getData(path),
+                            effects: getEffects(path)
                         });
                     }
                 });
@@ -576,11 +663,13 @@ var Scriptographer = new function() {
 
     return {
         // Runs the script's code, or a line of the console, in its scope,
-        // with the bundle's `executeScript()`:
-        execute: function(source, url, executeScript) {
+        // with the bundle's `executeScript()`, and `watchEffects()`, which
+        // tells the runtime the effects that it defines:
+        execute: function(source, url, executeScript, watchEffects) {
             if (!scope) {
                 scope = new paper.PaperScope();
                 scope._glyphsProjects = {};
+                watchEffects(scope.Effect);
             }
             invoke(function() {
                 // Without a layer, scripts still get a project:
@@ -639,6 +728,18 @@ var Scriptographer = new function() {
 
         hasTool: function() {
             return !!(scope && scope.tool);
+        },
+
+        // Draws the effects of the active layer's paths that the script
+        // knows, where their input changed, with the bundle's
+        // `applyEffect()`:
+        applyEffects: function(applyEffect) {
+            var snapshot = scope && takeSnapshot();
+            if (snapshot) {
+                invoke(function() {
+                    applyEffects(snapshot, applyEffect);
+                });
+            }
         },
 
         stop: function() {

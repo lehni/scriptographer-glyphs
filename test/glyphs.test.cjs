@@ -28,14 +28,39 @@ function createGlyphs(paths) {
         if (edit.remove) {
           layer.paths.splice(index, 1)
         } else if (edit.key != null) {
-          layer.paths[index] = { key: edit.key, closed: edit.closed, nodes: edit.nodes, data: edit.data || undefined }
+          // What the effects drew stays while they do:
+          const { effectsInput } = layer.paths[index]
+          layer.paths[index] = {
+            key: edit.key,
+            closed: edit.closed,
+            nodes: edit.nodes,
+            data: edit.data || undefined,
+            effects: edit.effects || undefined,
+            effectsInput: edit.effects ? effectsInput : undefined
+          }
         } else {
           const key = nextKey++
-          layer.paths.push({ key, closed: edit.closed, nodes: edit.nodes, data: edit.data || undefined })
+          layer.paths.push({
+            key,
+            closed: edit.closed,
+            nodes: edit.nodes,
+            data: edit.data || undefined,
+            effects: edit.effects || undefined
+          })
           keys.push(key)
         }
       }
       return keys
+    },
+    // Effect output goes beneath its path, as `effectOf` its key:
+    setEffectOutput(key, input, outputs) {
+      layer.paths = layer.paths.filter(p => p.effectOf !== key)
+      const path = layer.paths.find(p => p.key === key)
+      path.effectsInput = input
+      layer.paths.splice(layer.paths.indexOf(path), 0, ...outputs.map(output => ({
+        key: nextKey++, effectOf: key, closed: output.closed, nodes: output.nodes
+      })))
+      layer.effectOutputs = (layer.effectOutputs || 0) + 1
     },
     setSelection(layerKey, selection) {
       for (const path of layer.paths)
@@ -48,6 +73,7 @@ function createGlyphs(paths) {
   }
   const scriptographer = {
     print: line => output.push(line),
+    effects: { define() {}, forget() {} },
     now: () => 0,
     canvas: { properties: [], release() {} }
   }
@@ -59,7 +85,8 @@ function createGlyphs(paths) {
   const Scriptographer = context.Scriptographer
   // Runs scripts with the bundle's executeScript(), as the plugin does:
   const execute = (source, file) =>
-    Scriptographer.execute(source, file, scriptographer.executeScript)
+    Scriptographer.execute(source, file, scriptographer.executeScript,
+        scriptographer.watchEffects)
   return { layer, output, failures, natives: scriptographer, Scriptographer, execute }
 }
 
@@ -333,4 +360,76 @@ test('the data that Glyphs changes reloads', () => {
   layer.paths[0].data = '{"width":40}'
   Scriptographer.mouse('mousedown', 0, 0, {})
   assert.deepStrictEqual(output, ['20', '40'])
+})
+
+test('paths keep their effects in Glyphs', () => {
+  const { layer, output, execute } = createGlyphs([{
+    key: 2,
+    closed: false,
+    nodes: [0, 0, LINE, 0, 10, 0, LINE, 0]
+  }])
+  execute(`
+    project.activeLayer.firstChild.effects = [
+      { type: 'offset', parameters: { distance: 5 } }
+    ]
+  `, 'effects.js')
+  assert.deepStrictEqual(output, [])
+  assert.deepStrictEqual(JSON.parse(layer.paths[0].effects),
+      [{ type: 'offset', parameters: { distance: 5, join: 'miter', miterLimit: 10 } }])
+})
+
+test('effects draw beneath their path, again once their input changes', () => {
+  const { layer, output, natives, Scriptographer, execute } = createGlyphs([{
+    key: 2,
+    closed: true,
+    nodes: [100, 0, LINE, 0, 100, 100, LINE, 0, 0, 0, LINE, 0],
+    effects: '[{"type":"offset","parameters":{"distance":10}}]'
+  }])
+  execute('', 'effects.js')
+  Scriptographer.applyEffects(natives.applyEffect)
+  assert.deepStrictEqual(output, [])
+  assert.deepStrictEqual(layer.paths.map(p => p.effectOf ?? p.key), [2, 2])
+  assert.strictEqual(layer.paths[0].closed, true)
+  assert.ok(layer.paths[0].nodes.length > 0)
+  // Without changes, they don't draw again:
+  Scriptographer.applyEffects(natives.applyEffect)
+  assert.strictEqual(layer.effectOutputs, 1)
+  layer.paths[1].nodes = [200, 0, LINE, 0, 200, 100, LINE, 0, 0, 0, LINE, 0]
+  Scriptographer.applyEffects(natives.applyEffect)
+  assert.strictEqual(layer.effectOutputs, 2)
+  assert.deepStrictEqual(layer.paths.map(p => p.effectOf ?? p.key), [2, 2])
+})
+
+test('effects of other scripts are left to them', () => {
+  const { layer, output, natives, Scriptographer, execute } = createGlyphs([{
+    key: 2,
+    closed: false,
+    nodes: [0, 0, LINE, 0, 10, 0, LINE, 0],
+    effects: '[{"type":"elsewhere","parameters":{}}]'
+  }])
+  execute('', 'effects.js')
+  Scriptographer.applyEffects(natives.applyEffect)
+  assert.deepStrictEqual(output, [])
+  assert.strictEqual(layer.effectOutputs, undefined)
+})
+
+test('effects that scripts define draw with their parameters', () => {
+  const { layer, output, natives, Scriptographer, execute } = createGlyphs([{
+    key: 2,
+    closed: false,
+    nodes: [0, 0, LINE, 0, 10, 0, LINE, 0],
+    effects: '[{"type":"shift","parameters":{"x":5}}]'
+  }])
+  execute(`
+    new Effect({
+      type: 'shift',
+      parameters: { x: { type: 'number', value: 0 } },
+      onApply: function(event) {
+        return event.art.translate(this.x, 0)
+      }
+    })
+  `, 'effects.js')
+  Scriptographer.applyEffects(natives.applyEffect)
+  assert.deepStrictEqual(output, [])
+  assert.deepStrictEqual(plain(layer.paths[0].nodes), [5, 0, LINE, 0, 15, 0, LINE, 0])
 })

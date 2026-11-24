@@ -17,6 +17,10 @@
 	NSMapTable<id, NSNumber *> *_keysByObject;
 	NSMapTable<NSNumber *, id> *_objectsByKey;
 	NSUInteger _nextKey;
+	BOOL _isApplyingEffects;
+	// The layers that scripts changed in their current work, whose effects
+	// draw again once it's done, see -scriptDidWork:
+	NSMutableSet<GSLayer *> *_editedLayers;
 }
 
 + (instancetype)sharedRuntime {
@@ -32,6 +36,7 @@
 	self = [super init];
 	if (self) {
 		_scripts = [NSMutableDictionary dictionary];
+		_editedLayers = [NSMutableSet set];
 		_keysByObject = [NSMapTable weakToStrongObjectsMapTable];
 		_objectsByKey = [NSMapTable strongToWeakObjectsMapTable];
 		_nextKey = 1;
@@ -51,6 +56,9 @@
 				[weakSelf callHandler:handlers[notification]];
 			}];
 		}
+		// Effects draw again once an edit is done, into its undo step:
+		[center addObserver:self selector:@selector(undoGroupWillClose:)
+				name:NSUndoManagerWillCloseUndoGroupNotification object:nil];
 	}
 	return self;
 }
@@ -83,8 +91,15 @@
 			: nil;
 }
 
-// Where paths keep the scripts' `item.data`, as JSON:
+// Where paths keep the scripts' `item.data` and `item.effects`, as JSON,
+// with what the effects last drew: their input, and the id that their output
+// paths keep, so they draw again only once the input changes, see
+// -setEffectOutput:input:ofPathKey:
 static NSString *const dataKey = @"com.scriptographer.data";
+static NSString *const effectsKey = @"com.scriptographer.effects";
+static NSString *const effectsInputKey = @"com.scriptographer.effectsInput";
+static NSString *const effectsIdKey = @"com.scriptographer.effectsId";
+static NSString *const effectOfKey = @"com.scriptographer.effectOf";
 
 - (NSDictionary *)layerData {
 	GSLayer *layer = [self activeLayer];
@@ -117,9 +132,16 @@ static NSString *const dataKey = @"com.scriptographer.data";
 				@"nodes": nodes,
 				@"selection": selection
 			} mutableCopy];
-			id json = [path userDataForKey:dataKey];
-			if ([json isKindOfClass:[NSString class]])
-				entry[@"data"] = json;
+			NSDictionary *keys = @{
+				@"data": dataKey,
+				@"effects": effectsKey,
+				@"effectsInput": effectsInputKey
+			};
+			for (NSString *name in keys) {
+				id json = [path userDataForKey:keys[name]];
+				if ([json isKindOfClass:[NSString class]])
+					entry[name] = json;
+			}
 			[paths addObject:entry];
 		}
 	}
@@ -157,12 +179,60 @@ static NSString *const dataKey = @"com.scriptographer.data";
 	return YES;
 }
 
-// The data as JSON, or '' to remove it:
-- (void)setData:(NSString *)json ofPath:(GSPath *)path {
-	if (![json isKindOfClass:[NSString class]]
-			|| [json isEqual:[path userDataForKey:dataKey] ?: @""])
+// The path's value of `key`, or '' to remove it:
+- (void)setString:(NSString *)string forKey:(NSString *)key
+		ofPath:(GSPath *)path {
+	if (![string isKindOfClass:[NSString class]]
+			|| [string isEqual:[path userDataForKey:key] ?: @""])
 		return;
-	[path setUserData:json.length ? json : nil forKey:dataKey];
+	[path setUserData:string.length ? string : nil forKey:key];
+}
+
+// The data and effects of an edit. A path without effects loses what they
+// drew:
+- (void)setDataAndEffects:(NSDictionary *)edit ofPath:(GSPath *)path {
+	[self setString:edit[@"data"] forKey:dataKey ofPath:path];
+	[self setString:edit[@"effects"] forKey:effectsKey ofPath:path];
+	if (![path userDataForKey:effectsKey])
+		[self removeEffectOutputOfPath:path];
+}
+
+- (void)removeEffectOutputOfPath:(GSPath *)path {
+	NSString *outputId = [path userDataForKey:effectsIdKey];
+	GSLayer *layer = (GSLayer *)path.parent;
+	if (outputId && layer) {
+		NSMutableArray *outputs = [NSMutableArray array];
+		for (GSShape *shape in layer.shapes) {
+			if ([[shape userDataForKey:effectOfKey] isEqual:outputId])
+				[outputs addObject:shape];
+		}
+		[layer removeShapes:outputs];
+	}
+	[path removeUserDataForKey:effectsInputKey];
+	[path removeUserDataForKey:effectsIdKey];
+}
+
+- (void)setEffectOutput:(NSArray<NSDictionary *> *)outputs
+		input:(NSString *)input ofPathKey:(NSNumber *)key {
+	GSPath *path = [_objectsByKey objectForKey:key];
+	GSLayer *layer = (GSLayer *)path.parent;
+	if (![path isKindOfClass:[GSPath class]] || !layer)
+		return;
+	[self removeEffectOutputOfPath:path];
+	NSString *outputId = NSUUID.UUID.UUIDString;
+	[path setUserData:outputId forKey:effectsIdKey];
+	[path setUserData:input forKey:effectsInputKey];
+	// Beneath the path, in their order, locked, as they follow it:
+	NSInteger index = [layer.shapes indexOfObject:path];
+	for (NSDictionary *output in outputs) {
+		GSPath *shape = [[GSPath alloc] init];
+		shape.nodes = [self nodesFromValues:output[@"nodes"]];
+		shape.closed = [output[@"closed"] boolValue];
+		shape.locked = YES;
+		[shape setUserData:outputId forKey:effectOfKey];
+		[layer insertObject:shape inShapesAtIndex:index++];
+	}
+	_editCount++;
 }
 
 - (NSArray *)setPaths:(NSArray<NSDictionary *> *)edits layerKey:(NSNumber *)layerKey {
@@ -170,6 +240,7 @@ static NSString *const dataKey = @"com.scriptographer.data";
 	NSMutableArray *keys = [NSMutableArray array];
 	if (!layer)
 		return keys;
+	[_editedLayers addObject:layer];
 	for (NSDictionary *edit in edits) {
 		id key = edit[@"key"];
 		GSPath *path = [key isKindOfClass:[NSNumber class]]
@@ -178,20 +249,22 @@ static NSString *const dataKey = @"com.scriptographer.data";
 		NSArray *values = edit[@"nodes"];
 		BOOL closed = [edit[@"closed"] boolValue];
 		if ([edit[@"remove"] boolValue]) {
-			if (path)
+			if (path) {
+				[self removeEffectOutputOfPath:path];
 				[layer removeShape:path];
+			}
 		} else if (path) {
 			if (![self movePath:path nodes:values])
 				path.nodes = [self nodesFromValues:values];
 			if (path.closed != closed)
 				path.closed = closed;
-			[self setData:edit[@"data"] ofPath:path];
+			[self setDataAndEffects:edit ofPath:path];
 		} else if (!key || key == [NSNull null]) {
 			path = [[GSPath alloc] init];
 			path.nodes = [self nodesFromValues:values];
 			path.closed = closed;
-			[self setData:edit[@"data"] ofPath:path];
 			[layer addShape:path];
+			[self setDataAndEffects:edit ofPath:path];
 			[keys addObject:[self keyForObject:path]];
 		}
 	}
@@ -213,6 +286,45 @@ static NSString *const dataKey = @"com.scriptographer.data";
 		}
 	}
 	[layer replaceSelection:nodes];
+}
+
+#pragma mark - Effects
+
+// Each glyph keeps its own undo steps. Undoing one brings back what its
+// effects drew with it:
+- (void)undoGroupWillClose:(NSNotification *)notification {
+	GSUndoManager *manager = notification.object;
+	if (![manager isKindOfClass:[GSUndoManager class]]
+			|| manager.groupingLevel > 1 || manager.isUndoing
+			|| manager.isRedoing)
+		return;
+	GSGlyph *glyph = (GSGlyph *)manager.glyph;
+	if ([glyph isKindOfClass:[GSGlyph class]])
+		[self applyEffectsOfLayers:glyph.layers.allValues];
+}
+
+// Has the scripts draw the effects of the layers' paths, those that they
+// know, where their input changed:
+- (void)applyEffectsOfLayers:(NSArray<GSLayer *> *)layers {
+	if (_isApplyingEffects)
+		return;
+	_isApplyingEffects = YES;
+	GSLayer *toolLayer = _toolLayer;
+	NSMutableArray<SGScript *> *scripts = [_scripts.allValues mutableCopy];
+	if (_console)
+		[scripts addObject:_console];
+	for (GSLayer *layer in layers) {
+		BOOL hasEffects = NO;
+		for (GSShape *shape in layer.shapes)
+			hasEffects = hasEffects || [shape userDataForKey:effectsKey];
+		if (!hasEffects)
+			continue;
+		_toolLayer = layer;
+		for (SGScript *script in scripts)
+			[script applyEffects];
+	}
+	_toolLayer = toolLayer;
+	_isApplyingEffects = NO;
 }
 
 #pragma mark - Scripts
@@ -240,8 +352,14 @@ static NSString *const dataKey = @"com.scriptographer.data";
 	[script execute:source];
 	_startingScript = nil;
 	BOOL isRunning = _scripts[url.path] == script;
-	if (isRunning && _stateHandler)
-		_stateHandler();
+	if (isRunning) {
+		// The effects it defines draw what changed while it didn't run:
+		GSLayer *layer = [self activeLayer];
+		if (layer.parent)
+			[self applyEffectsOfLayers:layer.parent.layers.allValues];
+		if (_stateHandler)
+			_stateHandler();
+	}
 	return isRunning;
 }
 
@@ -309,6 +427,13 @@ static NSString *const dataKey = @"com.scriptographer.data";
 // console, as in VectorCraft; the last one to define a tool gets the Script
 // tool's events. Only what the browser shows changing tells it.
 - (void)scriptDidWork:(SGScript *)script {
+	// Within the undo step of a tool's drag, which Glyphs keeps open until the
+	// mouse goes up:
+	if (_editedLayers.count) {
+		NSArray *layers = _editedLayers.allObjects;
+		[_editedLayers removeAllObjects];
+		[self applyEffectsOfLayers:layers];
+	}
 	if (script != _console && ![script isRunning]) {
 		if (script != _startingScript && _scripts[script.url.path] == script)
 			[self print:[NSString stringWithFormat:@"%@ stopped", script.name]];

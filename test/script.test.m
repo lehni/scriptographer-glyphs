@@ -545,6 +545,52 @@ int main(void) {
 		NSArray *nodes = [runtime dataOfLayer:layer][@"paths"][0][@"nodes"];
 		CHECK([nodes[4] isEqual:@11.7] && [nodes[5] isEqual:@5.5]);
 
+		// Effects draw once an edit is done, as its undo step ends with the
+		// event, into that step, which takes what they drew back with it:
+		NSURL *shift = [NSURL fileURLWithPath:file(@"shift.js",
+				@"new Effect({"
+				"  type: 'shift',"
+				"  parameters: { x: { type: 'number', value: 0 } },"
+				"  onApply: function(event) {"
+				"    return event.art.translate(this.x, 0)"
+				"  }"
+				"})")];
+		CHECK([runtime runScriptAtURL:shift]);
+		runLoop(0.01);
+		[path setUserData:@"[{\"type\":\"shift\",\"parameters\":{\"x\":5}}]"
+				forKey:@"com.scriptographer.effects"];
+		runLoop(0.01);
+		CHECK(layer.shapes.count == 2);
+		GSPath *shifted = (GSPath *)layer.shapes[0];
+		CHECK(NSEqualPoints(shifted.nodes[1].positionPrecise,
+				NSMakePoint(16.7, 5.5)));
+		CHECK(shifted.locked && !path.locked);
+		path.nodes[1].position = NSMakePoint(20, 0);
+		runLoop(0.01);
+		CHECK(layer.shapes.count == 2);
+		shifted = (GSPath *)layer.shapes[0];
+		CHECK(NSEqualPoints(shifted.nodes[1].positionPrecise,
+				NSMakePoint(25, 0)));
+		[glyph.undoManager undo];
+		CHECK(layer.shapes.count == 2);
+		shifted = (GSPath *)layer.shapes[0];
+		CHECK(NSEqualPoints(path.nodes[1].position, NSMakePoint(12, 6)));
+		CHECK(NSEqualPoints(shifted.nodes[1].positionPrecise,
+				NSMakePoint(16.7, 5.5)));
+		// Scripts' edits draw them as they're done, also within an undo step
+		// that stays open, as Glyphs keeps a tool's drag in one:
+		runtime.toolLayer = layer;
+		[glyph.undoManager beginUndoGrouping];
+		[runtime evaluate:@"project.activeLayer.children.filter(function(item) {"
+				"  return item.effects.length"
+				"})[0].segments[1].point = new Point(30, -6)"];
+		shifted = (GSPath *)layer.shapes[0];
+		CHECK(NSEqualPoints(shifted.nodes[1].positionPrecise,
+				NSMakePoint(35, 6)));
+		[glyph.undoManager endUndoGrouping];
+		runtime.toolLayer = nil;
+		[runtime stopAllScripts];
+
 		// localStorage stays with the script, sessionStorage doesn't:
 		SGScript *again = [[SGScript alloc] initWithURL:url];
 		[again execute:@

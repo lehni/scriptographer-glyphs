@@ -66,6 +66,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary *)dataOfLayer:(GSLayer *)layer;
 - (NSArray *)setPaths:(NSArray<NSDictionary *> *)edits
 		layerKey:(NSNumber *)layerKey;
+// Replaces what the path's effects drew with `outputs`, `{ nodes, closed }`,
+// beneath it, and keeps the `input` they drew:
+- (void)setEffectOutput:(NSArray<NSDictionary *> *)outputs
+		input:(NSString *)input ofPathKey:(NSNumber *)key;
 // Selects the nodes of the paths, by their keys, and nothing else:
 - (void)setSelection:(NSDictionary<NSString *, NSArray<NSNumber *> *> *)selection
 		layerKey:(NSNumber *)layerKey;

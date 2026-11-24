@@ -78,6 +78,9 @@ static NSMapTable<NSValue *, SGScript *> *scriptsByContext;
 	SGWorkers *_workers;
 	// Whether it's being stopped, as it hung:
 	BOOL _isStopping;
+	// The types of the effects it defines, which keep it running to draw
+	// them:
+	NSMutableSet<NSString *> *_effectTypes;
 	// The preferences the script last left, as kept:
 	NSString *_preferences;
 	// A worker's link to who it works for, and what receives from them:
@@ -306,9 +309,20 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 
 - (NSDictionary *)natives {
 	__weak SGScript *weakSelf = self;
+	NSMutableSet<NSString *> *effectTypes = _effectTypes =
+			[NSMutableSet set];
 	return @{
 		@"print": ^(NSString *line) {
 			[SGScript print:line];
+		},
+		@"effects": @{
+			@"define": ^(NSString *type, NSString *label,
+					NSString *parameters) {
+				[effectTypes addObject:type];
+			},
+			@"forget": ^(NSString *type) {
+				[effectTypes removeObject:type];
+			}
 		},
 		@"now": ^double {
 			SGScript *script = weakSelf;
@@ -443,6 +457,10 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 		},
 		@"setPaths": ^NSArray *(NSNumber *layerKey, NSArray *edits) {
 			return [runtime setPaths:edits layerKey:layerKey];
+		},
+		@"setEffectOutput": ^(NSNumber *key, NSString *input,
+				NSArray *outputs) {
+			[runtime setEffectOutput:outputs input:input ofPathKey:key];
 		},
 		@"setSelection": ^(NSNumber *layerKey, NSDictionary *selection) {
 			[runtime setSelection:selection layerKey:layerKey];
@@ -906,7 +924,7 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 - (void)execute:(NSString *)source {
 	[_scriptographer invokeMethod:@"execute"
 			withArguments:@[source, _url.absoluteString ?: _name,
-				_natives[@"executeScript"]]];
+				_natives[@"executeScript"], _natives[@"watchEffects"]]];
 	[self didWork];
 }
 
@@ -986,7 +1004,7 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 }
 
 - (BOOL)isRunning {
-	return _context && (_timers.count || [self isBusy]
+	return _context && (_timers.count || _effectTypes.count || [self isBusy]
 			|| [_scriptographer invokeMethod:@"isRunning" withArguments:@[]]
 				.toBool
 			|| [_natives invokeMethod:@"hasPalettes" withArguments:@[]]
@@ -1095,6 +1113,14 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 	[_scriptographer invokeMethod:@"mouse" withArguments:@[
 		type, @(point.x), @(point.y), [self modifiersFromFlags:modifiers]
 	]];
+	[self didWork];
+}
+
+- (void)applyEffects {
+	if (!_context || _link)
+		return;
+	[_scriptographer invokeMethod:@"applyEffects"
+			withArguments:@[_natives[@"applyEffect"]]];
 	[self didWork];
 }
 
