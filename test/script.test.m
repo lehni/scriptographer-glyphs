@@ -591,8 +591,9 @@ int main(void) {
 		runtime.toolLayer = nil;
 		[runtime stopAllScripts];
 
-		// Paths with effects are hidden, so only what the effects draw is
-		// outline, and shown again without:
+		// Closed paths with effects are hidden, so only what the effects draw
+		// is outline, and shown again without. Open ones aren't outline, and
+		// stay as they are:
 		NSDictionary *entry = [[runtime dataOfLayer:layer][@"paths"]
 				filteredArrayUsingPredicate:[NSPredicate
 					predicateWithFormat:@"effects != nil"]].firstObject;
@@ -602,6 +603,9 @@ int main(void) {
 			@"closed": entry[@"closed"],
 			@"effects": entry[@"effects"]
 		} mutableCopy];
+		[runtime setPaths:@[change] layerKey:[runtime dataOfLayer:layer][@"key"]];
+		CHECK(!path.hidden);
+		change[@"closed"] = @YES;
 		[runtime setPaths:@[change] layerKey:[runtime dataOfLayer:layer][@"key"]];
 		CHECK(path.hidden);
 		change[@"effects"] = @"";
