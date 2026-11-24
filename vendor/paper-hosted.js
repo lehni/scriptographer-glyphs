@@ -9,7 +9,7 @@
  *
  * All rights reserved.
  *
- * Date: Tue Nov 24 22:27:19 2026 +0100
+ * Date: Wed Nov 25 00:09:24 2026 +0100
  *
  ***
  *
@@ -1096,7 +1096,7 @@ var paper = (function() {
 	*
 	* @param classesByName the classes to register, by name
 	*/
-	function registerClasses(classesByName) {
+	function registerClasses$1(classesByName) {
 		for (const [name, ctor] of Object.entries(classesByName)) {
 			Object.defineProperty(ctor.prototype, "className", { value: name });
 			classes$1[name] = ctor;
@@ -1179,6 +1179,30 @@ var paper = (function() {
 	function exportJSON(obj, options) {
 		const json = serialize(obj, options);
 		return options?.asString == false ? json : JSON.stringify(json);
+	}
+
+//#endregion
+//#region src/core/features.ts
+	const features = {};
+	/**
+	* Adds the features to the library that `paper/core` leaves out, e.g.
+	* `use(boolean)` with `boolean` from `paper/boolean` for the boolean
+	* operations of path items. The `paper` entry adds all of them.
+	*
+	* @param list the features to add
+	*/
+	function use$1(...list) {
+		for (const { feature } of list) Object.assign(features, { [feature.name]: feature });
+	}
+	/**
+	* Returns the feature, or throws if it wasn't added through use().
+	*
+	* @private
+	*/
+	function getFeature(name) {
+		const feature = features[name];
+		if (!feature) throw new Error(`Unable to use ${name} without use(${name}) from 'paper/${name}'.`);
+		return feature;
 	}
 
 //#endregion
@@ -1563,6 +1587,7 @@ var paper = (function() {
 			return new Size(Math.random(), Math.random());
 		}
 		static {
+			registerClasses$1({ Size: this });
 			for (const key of [
 				"round",
 				"ceil",
@@ -2026,6 +2051,7 @@ var paper = (function() {
 			return rect instanceof Rectangle ? rect : new Rectangle(rect, y, width, height);
 		}
 		static {
+			registerClasses$1({ Rectangle: this });
 			for (const [key, [keyX, keyY]] of Object.entries({
 				topLeft: ["left", "top"],
 				topRight: ["right", "top"],
@@ -2826,6 +2852,7 @@ var paper = (function() {
 			return Math.abs(x1 * x2 + y1 * y2) <= Math.sqrt((x1 * x1 + y1 * y1) * (x2 * x2 + y2 * y2)) * TRIGONOMETRIC_EPSILON;
 		}
 		static {
+			registerClasses$1({ Point: this });
 			for (const key of [
 				"round",
 				"ceil",
@@ -3452,6 +3479,7 @@ var paper = (function() {
 			return [radius * Math.sqrt(a * a + c * c), radius * Math.sqrt(b * b + d * d)];
 		}
 		static {
+			registerClasses$1({ Matrix: this });
 			for (const [index, key] of [
 				"a",
 				"b",
@@ -3479,6 +3507,9 @@ var paper = (function() {
 	* @private
 	*/
 	var Line = class Line extends Base {
+		static {
+			registerClasses$1({ Line: this });
+		}
 		#px;
 		#py;
 		#vx;
@@ -8679,6 +8710,7 @@ var paper = (function() {
 			return color;
 		}
 		static {
+			registerClasses$1({ Color: this });
 			for (const [type, names] of Object.entries(types$2)) {
 				componentParsers[type] = [];
 				names.forEach((name, index) => {
@@ -8724,6 +8756,9 @@ var paper = (function() {
 	* The GradientStop object.
 	*/
 	var GradientStop = class GradientStop extends Base {
+		static {
+			registerClasses$1({ GradientStop: this });
+		}
 		_color;
 		_offset;
 		_owner;
@@ -8910,6 +8945,9 @@ var paper = (function() {
 	* };
 	*/
 	var Gradient = class Gradient extends Base {
+		static {
+			registerClasses$1({ Gradient: this });
+		}
 		_id;
 		_stops;
 		_radial;
@@ -9185,7 +9223,7 @@ var paper = (function() {
 		constructor(style, _owner, _project) {
 			super();
 			this.#owner = _owner;
-			this.#project = _owner?._project ?? _project ?? paper$1.project;
+			this.#project = _owner?._project ?? _project ?? getScope().project;
 			this._defaults = !_owner || _owner instanceof Group ? groupDefaults : _owner instanceof TextItem || _owner instanceof TextStory || _owner instanceof TextRange ? textDefaults : itemDefaults;
 			if (style) this.set(style);
 		}
@@ -9312,6 +9350,7 @@ var paper = (function() {
 			return lineHeight === "auto" ? 1.2 * this._getFontSize() : typeof lineHeight === "string" ? this.view.getPixelSize(lineHeight) : lineHeight * this._getFontSize();
 		}
 		static {
+			registerClasses$1({ Style: this });
 			Object.assign(this.prototype, {
 				_scriptSize: .583,
 				_scriptShift: .333
@@ -9337,6 +9376,15 @@ var paper = (function() {
 	* The currently active scope, which PaperScope#activate() sets.
 	*/
 	let paper$1 = null;
+	/**
+	* Returns the active scope, and creates one on first use if there is none
+	* yet, as importing `paper/core` creates none.
+	*
+	* @private
+	*/
+	function getScope() {
+		return paper$1 ?? new PaperScope();
+	}
 	let agent;
 	/**
 	* The `PaperScope` class represents the scope associated with a Paper
@@ -9456,30 +9504,7 @@ var paper = (function() {
 		* version: '130.0', versionNumber: 130 }`.
 		*/
 		get agent() {
-			if (!agent) {
-				const user = (globalThis.navigator?.userAgent || "").toLowerCase();
-				const os = (/(darwin|win|mac|linux|freebsd|sunos)/.exec(user) ?? [])[0];
-				const platform = os === "darwin" ? "mac" : os;
-				agent = { platform };
-				if (platform) agent[platform] = true;
-				user.replace(/(opera|chrome|safari|webkit|firefox|msie|trident|atom|node|jsdom)\/?\s*([.\d]+)(?:.*version\/([.\d]+))?(?:.*rv:v?([.\d]+))?/g, (match, name, version1, version2, revision) => {
-					if (!agent.chrome) {
-						const version = name === "opera" ? version2 : /^(node|trident)$/.test(name) ? revision : version1;
-						agent.version = version;
-						agent.versionNumber = parseFloat(version);
-						name = {
-							trident: "msie",
-							jsdom: "node"
-						}[name] ?? name;
-						agent.name = name;
-						agent[name] = true;
-					}
-					return match;
-				});
-				if (agent.chrome) delete agent.webkit;
-				if (agent.atom) delete agent.chrome;
-			}
-			return agent;
+			return getAgent();
 		}
 		/**
 		* Injects the paper scope into any other given scope. Can be used for
@@ -9567,6 +9592,7 @@ var paper = (function() {
 			return element.hasAttribute(name) || element.hasAttribute("data-paper-" + name);
 		}
 		static {
+			registerClasses$1({ PaperScope: this });
 			for (const key of [
 				"project",
 				"view",
@@ -9576,6 +9602,38 @@ var paper = (function() {
 			]) Object.defineProperty(this.prototype, key, { enumerable: true });
 		}
 	};
+	/**
+	* Returns the platform and browser that Paper.js runs in, see
+	* {@link PaperScope#agent}, detected once on first use.
+	*
+	* @private
+	*/
+	function getAgent() {
+		if (!agent) {
+			const user = (globalThis.navigator?.userAgent || "").toLowerCase();
+			const os = (/(darwin|win|mac|linux|freebsd|sunos)/.exec(user) ?? [])[0];
+			const platform = os === "darwin" ? "mac" : os;
+			agent = { platform };
+			if (platform) agent[platform] = true;
+			user.replace(/(opera|chrome|safari|webkit|firefox|msie|trident|atom|node|jsdom)\/?\s*([.\d]+)(?:.*version\/([.\d]+))?(?:.*rv:v?([.\d]+))?/g, (match, name, version1, version2, revision) => {
+				if (!agent.chrome) {
+					const version = name === "opera" ? version2 : /^(node|trident)$/.test(name) ? revision : version1;
+					agent.version = version;
+					agent.versionNumber = parseFloat(version);
+					name = {
+						trident: "msie",
+						jsdom: "node"
+					}[name] ?? name;
+					agent.name = name;
+					agent[name] = true;
+				}
+				return match;
+			});
+			if (agent.chrome) delete agent.webkit;
+			if (agent.atom) delete agent.chrome;
+		}
+		return agent;
+	}
 
 //#endregion
 //#region src/scope/PaperScopeItem.ts
@@ -9592,7 +9650,7 @@ var paper = (function() {
 		*/
 		constructor(activate) {
 			super();
-			this._scope = paper$1;
+			this._scope = getScope();
 			this._index = this._scope[this._list].push(this) - 1;
 			if (activate || !this._scope[this._reference]) this.activate();
 		}
@@ -9684,8 +9742,8 @@ var paper = (function() {
 			const hasProps = isPlainObject(props);
 			const internal = hasProps && props.internal === true;
 			const matrix = this._matrix = new Matrix();
-			const project = hasProps && props.project || paper$1.project;
-			const { settings } = paper$1;
+			const project = hasProps && props.project || getScope().project;
+			const { settings } = getScope();
 			if (!project) throw new Error("Unable to create an item without a project. Call paper.setup() or create a Project first.");
 			this._id = internal ? null : getUID();
 			this._parent = this._index = null;
@@ -9703,7 +9761,7 @@ var paper = (function() {
 			return hasProps;
 		}
 		_initializeContent(project) {
-			this._applyMatrix = this._canApplyMatrix && paper$1.settings.applyMatrix;
+			this._applyMatrix = this._canApplyMatrix && getScope().settings.applyMatrix;
 			this._style = new Style(this._getCurrentStyle(project), this, project);
 		}
 		_getCurrentStyle(project) {
@@ -9734,8 +9792,8 @@ var paper = (function() {
 			if (flags & ChangeFlag.GEOMETRY) this._bounds = this._position = this._decomposed = void 0;
 			else if (flags & ChangeFlag.STROKE) this._bounds = void 0;
 			if (flags & ChangeFlag.MATRIX) this._globalMatrix = void 0;
-			if (cacheParent && flags & (ChangeFlag.GEOMETRY | ChangeFlag.STROKE)) Item._clearBoundsCache(cacheParent);
-			if (flags & ChangeFlag.CHILDREN) Item._clearBoundsCache(this);
+			if (cacheParent && flags & (ChangeFlag.GEOMETRY | ChangeFlag.STROKE)) clearBoundsCache(cacheParent);
+			if (flags & ChangeFlag.CHILDREN) clearBoundsCache(this);
 			if (flags & ChangeFlag.APPEARANCE) for (let item = this; item; item = item._parent) {
 				if (item._buffer) item._buffer.matrix = null;
 				item._effectOutput = void 0;
@@ -10239,13 +10297,7 @@ var paper = (function() {
 			this.transform(new Matrix().translate(rect.center.subtract(getStrokeBounds(sx, sy).center)).append(getMatrix(sx, sy)));
 		}
 		getBounds(matrix, options) {
-			const hasMatrix = options || matrix instanceof Matrix;
-			const opts = {
-				...hasMatrix ? options : matrix,
-				...this._boundsOptions
-			};
-			if (!opts.stroke || this.strokeScaling) opts.cacheItem = this;
-			return this._getCachedBounds(hasMatrix ? matrix : null, opts).rect;
+			return getItemBounds(this, matrix, options);
 		}
 		/**
 		* Returns the bounding rectangle of the item including stroke width,
@@ -10266,117 +10318,15 @@ var paper = (function() {
 		_getBounds(matrix, options) {
 			const children = this._children;
 			if (!children || !children.length) return new Rectangle();
-			Item._updateBoundsCache(this, options.cacheItem);
-			return Item._getBounds(children, matrix, options);
-		}
-		_getBoundsCacheKey(options, internal) {
-			return [
-				options.stroke ? 1 : 0,
-				options.handle ? 1 : 0,
-				internal ? 1 : 0
-			].join("");
+			updateBoundsCache(this, options.cacheItem);
+			return getCombinedBounds(children, matrix, options);
 		}
 		/**
 		* Private method that deals with the calling of _getBounds, recursive
 		* matrix concatenation and handles all the complicated caching mechanisms.
 		*/
 		_getCachedBounds(matrix, options, noInternal) {
-			const internal = options.internal && !noInternal;
-			const { cacheItem } = options;
-			const _matrix = internal ? null : this._matrix._orNullIfIdentity();
-			const transform = matrix ? matrix._orNullIfIdentity() : _matrix;
-			const cacheKey = cacheItem && !isInheritingStyle() && (transform ? transform.equals(_matrix) : !_matrix) && this._getBoundsCacheKey(options, internal);
-			const isIntermediate = cacheKey && cacheItem !== this && (this._children || this._definition);
-			let bounds = this._bounds;
-			Item._updateBoundsCache(this._parent || this._symbol, cacheItem);
-			if (isIntermediate) Item._updateBoundsCache(this, cacheItem);
-			if (cacheKey && bounds && cacheKey in bounds) {
-				const cached = bounds[cacheKey];
-				return {
-					rect: cached.rect.clone(),
-					nonscaling: cached.nonscaling
-				};
-			}
-			const res = this._getBounds(transform, isIntermediate ? {
-				...options,
-				cacheItem: this
-			} : options);
-			const rect = res instanceof Rectangle ? res : res.rect;
-			const style = this._style;
-			const nonscaling = !(res instanceof Rectangle) && res.nonscaling || style.hasStroke() && !style.strokeScaling;
-			if (cacheKey) {
-				if (!bounds) this._bounds = bounds = {};
-				bounds[cacheKey] = {
-					rect: rect.clone(),
-					nonscaling,
-					stroke: options.stroke,
-					internal
-				};
-			}
-			return {
-				rect,
-				nonscaling
-			};
-		}
-		/**
-		* Returns to correct matrix to use to transform stroke related geometries
-		* when calculating bounds: the item's matrix if {@link #strokeScaling} is
-		* `true`, otherwise the parent's inverted view matrix. The returned matrix
-		* is always shiftless, meaning its translation vector is reset to zero.
-		*/
-		_getStrokeMatrix(matrix, options) {
-			const parent = this.strokeScaling ? null : options?.internal ? this : this._parent ?? this._symbol?._item;
-			let mx = parent ? parent.viewMatrix.invert() : matrix;
-			const transform = !parent && options?.transform;
-			if (transform) {
-				for (let item = this; item?._applyMatrix; item = item._parent) if (item === transform.item) {
-					mx = transform.matrix.inverted().appended(mx);
-					break;
-				}
-			}
-			return mx?._shiftless();
-		}
-		/**
-		* Set up a boundsCache structure that keeps track of items that keep
-		* cached bounds that depend on this item. We store this in the parent,
-		* for multiple reasons:
-		* The parent receives CHILDREN change notifications for when its
-		* children are added or removed and can thus clear the cache, and we
-		* save a lot of memory, e.g. when grouping 100 items and asking the
-		* group for its bounds. If stored on the children, we would have 100
-		* times the same structure.
-		*
-		* @private
-		*/
-		static _updateBoundsCache(parent, item) {
-			if (parent && item) {
-				const id = item._id;
-				const ref = parent._boundsCache ??= {
-					ids: {},
-					list: []
-				};
-				if (!ref.ids[id]) {
-					ref.list.push(item);
-					ref.ids[id] = item;
-				}
-			}
-		}
-		/**
-		* Clears cached bounds of all items that the children of this item are
-		* contributing to. See _updateBoundsCache() for an explanation why this
-		* information is stored on parents, not the children themselves.
-		*
-		* @private
-		*/
-		static _clearBoundsCache(item) {
-			const cache = item._boundsCache;
-			if (cache) {
-				item._bounds = item._position = item._boundsCache = void 0;
-				for (const other of cache.list) if (other !== item) {
-					other._bounds = other._position = void 0;
-					if (other._boundsCache) Item._clearBoundsCache(other);
-				}
-			}
+			return getCachedBounds(this, matrix, options, noInternal);
 		}
 		/**
 		* Returns the bounds of the given items in project coordinates, as if
@@ -10394,34 +10344,7 @@ var paper = (function() {
 		* @return the bounds of the items, empty if there are none
 		*/
 		static getBounds(items, options) {
-			return Item._getBounds(items, null, options, true).rect;
-		}
-		/**
-		* Gets the combined bounds of all specified items, transformed by the
-		* matrix, or in project coordinates if global is set.
-		*
-		* @private
-		*/
-		static _getBounds(items, matrix, options, global) {
-			let x1 = Infinity;
-			let x2 = -x1;
-			let y1 = x1;
-			let y2 = x2;
-			let nonscaling = false;
-			const opts = options ?? {};
-			for (const item of items) if (item._visible && !item.isEmpty(true)) {
-				const bounds = item._getCachedBounds(global ? item._getGlobalMatrix(true) : matrix?.appended(item._matrix), opts, true);
-				const { rect } = bounds;
-				x1 = Math.min(rect.x, x1);
-				y1 = Math.min(rect.y, y1);
-				x2 = Math.max(rect.x + rect.width, x2);
-				y2 = Math.max(rect.y + rect.height, y2);
-				if (bounds.nonscaling) nonscaling = true;
-			}
-			return {
-				rect: isFinite(x1) ? new Rectangle(x1, y1, x2 - x1, y2 - y1) : new Rectangle(),
-				nonscaling
-			};
+			return getCombinedBounds(items, null, options, true).rect;
 		}
 		_decompose() {
 			return this._applyMatrix ? null : this._decomposed ??= this._matrix.decompose();
@@ -10606,15 +10529,7 @@ var paper = (function() {
 		* @return the inserted instances
 		*/
 		insertEffects(index, effects) {
-			const list = this._effects ??= [];
-			const inserted = effects.map((effect) => {
-				const instance = new EffectInstance(effect);
-				instance._item = this;
-				return instance;
-			});
-			splice(list, inserted, index, 0);
-			this._changed(Change.ATTRIBUTE);
-			return inserted;
+			return insertEffects(this, index, effects);
 		}
 		/**
 		* Removes the effect at the given index from the item's effects.
@@ -10634,15 +10549,7 @@ var paper = (function() {
 		* @return the removed instances
 		*/
 		removeEffects(start = 0, end) {
-			const list = this._effects;
-			let removed = [];
-			if (list) {
-				removed = splice(list, null, start, (end ?? list.length) - start);
-				for (const instance of removed) instance._item = instance._index = null;
-				if (removed.length) this._changed(Change.ATTRIBUTE);
-				if (!list.length) this._effects = null;
-			}
-			return removed;
+			return removeEffects(this, start, end);
 		}
 		_hasEffects() {
 			return !!this._effects?.some((instance) => instance._visible);
@@ -10656,14 +10563,7 @@ var paper = (function() {
 		* @return the output of the effects
 		*/
 		getEffectOutput() {
-			let output = this._effectOutput;
-			if (output === void 0 || this._effectVersion !== Effect._version) {
-				const art = this._hasEffects() && this._getEffectArt();
-				output = art ? this._applyEffects(art) ?? art : null;
-				this._effectOutput = output;
-				this._effectVersion = Effect._version;
-			}
-			return output;
+			return getEffectOutput(this);
 		}
 		_applyEffects(art) {
 			let output = null;
@@ -10679,25 +10579,6 @@ var paper = (function() {
 				}
 			}
 			return output;
-		}
-		_getEffectArt() {
-			const art = this.clone({ insert: false });
-			art.effects = null;
-			art.matrix = new Matrix();
-			function expand(source, copy) {
-				const children = source._children;
-				for (let i = 0, l = children ? children.length : 0; i < l; i++) {
-					const child = children[i];
-					let output = child.getEffectOutput();
-					if (output) {
-						output = output.clone({ insert: false });
-						output.transform(child._matrix);
-						copy._children[i].replaceWith(output);
-					} else expand(child, copy._children[i]);
-				}
-			}
-			expand(this, art);
-			return art;
 		}
 		/**
 		* The bounds of what the item looks like with its effects, in the
@@ -10715,18 +10596,7 @@ var paper = (function() {
 		* @param matrix the matrix to transform the bounds with
 		*/
 		getPreviewBounds(matrix) {
-			const output = this.getEffectOutput();
-			const children = this._children;
-			if (output || children && hasEffects(this)) {
-				let bounds = null;
-				if (output) bounds = output.strokeBounds;
-				else for (const child of children) if (child._visible) {
-					const rect = child.previewBounds;
-					bounds = bounds ? bounds.unite(rect) : rect;
-				}
-				if (bounds) return (matrix ? matrix.appended(this._matrix) : this._matrix)._transformBounds(bounds);
-			}
-			return this.getStrokeBounds(matrix);
+			return getPreviewBounds(this, matrix);
 		}
 		/**
 		* {@grouptitle Project Hierarchy}
@@ -10973,7 +10843,7 @@ var paper = (function() {
 		clone(options) {
 			const copy = new this.constructor(Item.NO_INSERT);
 			const children = this._children;
-			const { insert = paper$1.settings.insertItems, deep = true } = typeof options === "boolean" ? { insert: options } : options ?? {};
+			const { insert = getScope().settings.insertItems, deep = true } = typeof options === "boolean" ? { insert: options } : options ?? {};
 			if (children) copy.copyAttributes(this);
 			if (!children || deep) copy.copyContent(this);
 			if (!children) copy.copyAttributes(this);
@@ -11060,7 +10930,7 @@ var paper = (function() {
 		* raster.scale(5);
 		*/
 		rasterize(options = {}) {
-			const { resolution, insert = paper$1.settings.insertItems } = options;
+			const { resolution, insert = getScope().settings.insertItems } = options;
 			const raster = options.raster ?? new Raster(Item.NO_INSERT);
 			const bounds = this.previewBounds;
 			const scale = (resolution || this.view.resolution) / 72;
@@ -11861,7 +11731,7 @@ var paper = (function() {
 					}
 				}
 				this._bounds = bounds;
-				const cached = bounds[this._getBoundsCacheKey(this._boundsOptions ?? {})];
+				const cached = bounds[getBoundsCacheKey(this._boundsOptions ?? {})];
 				if (cached) this._position = this._getPositionFromBounds(cached.rect);
 			} else if (transformMatrix && position && this._pivot) this._position = matrix._transformPoint(position, position);
 			return this;
@@ -12112,6 +11982,7 @@ var paper = (function() {
 			return this.tween(from, null, options);
 		}
 		static {
+			registerClasses$1({ Item: this });
 			Object.assign(this.prototype, {
 				_name: null,
 				_effects: null,
@@ -12278,9 +12149,6 @@ var paper = (function() {
 	function countDrawHandlers(item, sign) {
 		if (item === item.constructor.prototype) Item._drawCount += sign;
 		else if (item.isInserted()) item._project._drawCount += sign;
-	}
-	function hasEffects(item) {
-		return item._hasEffects() || !!item._children?.some((child) => hasEffects(child));
 	}
 
 //#endregion
@@ -12496,6 +12364,7 @@ var paper = (function() {
 			for (const child of this._children) if (child !== clipItem) drawItem(child, ctx, param);
 		}
 		static {
+			registerClasses$1({ Group: this });
 			Object.assign(this.prototype, {
 				_selectBounds: false,
 				_selectChildren: true,
@@ -12556,6 +12425,7 @@ var paper = (function() {
 		}
 		_hitTestSelf() {}
 		static {
+			registerClasses$1({ Layer: this });
 			this.prototype._textWrapVersion = 0;
 		}
 	};
@@ -12685,8 +12555,8 @@ var paper = (function() {
 		*/
 		toPath(insert) {
 			const path = this._asPathItem();
-			if (paper$1.settings.applyMatrix) path.applyMatrix = true;
-			if (insert !== void 0 ? insert : paper$1.settings.insertItems) path.insertAbove(this);
+			if (getScope().settings.applyMatrix) path.applyMatrix = true;
+			if (insert !== void 0 ? insert : getScope().settings.insertItems) path.insertAbove(this);
 			return path;
 		}
 		toShape(insert) {
@@ -12789,7 +12659,7 @@ var paper = (function() {
 					rect = new Rectangle(matrix.tx - x, matrix.ty - y, x * 2, y * 2);
 				}
 			}
-			return strokeRadius ? rect.expand(new Size(Matrix._getCircleExtents(strokeRadius, this._getStrokeMatrix(matrix, options))).multiply(2)) : rect;
+			return strokeRadius ? rect.expand(new Size(Matrix._getCircleExtents(strokeRadius, getStrokeMatrix(this, matrix, options))).multiply(2)) : rect;
 		}
 		_contains(point) {
 			if (this._type === "rectangle") {
@@ -12808,6 +12678,7 @@ var paper = (function() {
 			return hit && new HitResult(hit.type, this);
 		}
 		static {
+			registerClasses$1({ Shape: this });
 			defineDeprecatedConstructors(this, [
 				"circle",
 				"rectangle",
@@ -13372,6 +13243,7 @@ var paper = (function() {
 			return true;
 		}
 		static {
+			registerClasses$1({ Raster: this });
 			Object.assign(this.prototype, {
 				_applyMatrix: false,
 				_canApplyMatrix: false,
@@ -13400,7 +13272,7 @@ var paper = (function() {
 		constructor() {
 			super();
 			this._id = getUID();
-			this.project = paper$1.project;
+			this.project = getScope().project;
 		}
 		/**
 		* Sets the properties of the passed object on the definition.
@@ -13412,7 +13284,7 @@ var paper = (function() {
 		}
 		_changed(flags) {
 			const { project } = this;
-			if (flags & ChangeFlag.GEOMETRY) Item._clearBoundsCache(this);
+			if (flags & ChangeFlag.GEOMETRY) clearBoundsCache(this);
 			if (flags & ChangeFlag.APPEARANCE) {
 				project._bufferVersion++;
 				project._changed(flags);
@@ -13456,6 +13328,9 @@ var paper = (function() {
 	* to be updated with every transformation.
 	*/
 	var SymbolDefinition = class SymbolDefinition extends ItemDefinition {
+		static {
+			registerClasses$1({ SymbolDefinition: this });
+		}
 		constructor(item, props) {
 			super();
 			if (item) this._setItem(item);
@@ -13571,6 +13446,7 @@ var paper = (function() {
 			return this.replaceWith(item) ? item : null;
 		}
 		static {
+			registerClasses$1({ SymbolItem: this });
 			Object.assign(this.prototype, {
 				_applyMatrix: false,
 				_canApplyMatrix: false,
@@ -13622,6 +13498,9 @@ var paper = (function() {
 	* });
 	*/
 	var PatternDefinition = class PatternDefinition extends ItemDefinition {
+		static {
+			registerClasses$1({ PatternDefinition: this });
+		}
 		_tile = null;
 		_spacing = new Size();
 		#canvases = {};
@@ -13755,6 +13634,9 @@ var paper = (function() {
 	* {@link Project#hitTest(point)}.
 	*/
 	var HitResult = class extends Base {
+		static {
+			registerClasses$1({ HitResult: this });
+		}
 		/**
 		* Describes the type of the hit result. For example, if you hit a segment
 		* point, the type would be `'segment'`.
@@ -13821,7 +13703,7 @@ var paper = (function() {
 		static getOptions(options) {
 			return {
 				type: null,
-				tolerance: paper$1.settings.hitTolerance,
+				tolerance: getScope().settings.hitTolerance,
 				fill: !options,
 				stroke: !options,
 				segments: !options,
@@ -13979,6 +13861,7 @@ var paper = (function() {
 			return instance === this || instance instanceof EffectInstance && this.#type === instance.#type && this._visible === instance._visible && equals(this._parameters, instance._parameters) || false;
 		}
 		static {
+			registerClasses$1({ EffectInstance: this });
 			this.prototype._compactSerialize = true;
 		}
 	};
@@ -14006,6 +13889,9 @@ var paper = (function() {
 	* path.addEffect({ type: 'shrink', parameters: { amount: 0.8 } });
 	*/
 	var Effect = class Effect extends Base {
+		static {
+			registerClasses$1({ Effect: this });
+		}
 		static _version = 0;
 		#type;
 		#label;
@@ -14995,6 +14881,7 @@ var paper = (function() {
 			}
 		}
 		static {
+			registerClasses$1({ Project: this });
 			Object.assign(this.prototype, {
 				_list: "projects",
 				_reference: "project",
@@ -15267,7 +15154,7 @@ var paper = (function() {
 			buffer = item._buffered && param.view && !param.clipItem && (item._buffer ??= {});
 			const version = item._project._bufferVersion;
 			isFresh = buffer && viewMatrix.equals(buffer.matrix) && buffer.version === version;
-			let bounds = isFresh ? buffer.bounds : item.getPreviewBounds(viewMatrix);
+			let bounds = isFresh ? buffer.bounds : getPreviewBounds(item, viewMatrix);
 			if (!isFresh && style._get("shadowColor", true)) {
 				const mx = viewMatrix._shiftless();
 				const blur = mx.transform(new Point(style._get("shadowBlur", true), 0));
@@ -15339,7 +15226,7 @@ var paper = (function() {
 		}
 		if (!isFresh && !event?.prevented) {
 			const drawParam = shadow && !direct ? Object.assign(Object.create(param), { dontShadow: true }) : param;
-			const output = item.getEffectOutput();
+			const output = getEffectOutput(item);
 			if (output) drawItem(output, ctx, Object.assign(Object.create(drawParam), { updateMatrix: false }), strokeMatrix);
 			else item._draw(ctx, drawParam, viewMatrix, strokeMatrix);
 		}
@@ -15429,6 +15316,230 @@ var paper = (function() {
 				stroke: true
 			}));
 		}
+	}
+
+//#endregion
+//#region src/item/bounds.ts
+	function getItemBounds(item, matrix, options) {
+		const hasMatrix = options || matrix instanceof Matrix;
+		const opts = {
+			...hasMatrix ? options : matrix,
+			...item._boundsOptions
+		};
+		if (!opts.stroke || item.strokeScaling) opts.cacheItem = item;
+		return item._getCachedBounds(hasMatrix ? matrix : null, opts).rect;
+	}
+	/**
+	* Deals with the calling of _getBounds(), recursive matrix concatenation and
+	* all the caching, behind Item#_getCachedBounds(), which hosted shells
+	* override.
+	*
+	* @private
+	*/
+	function getCachedBounds(item, matrix, options, noInternal) {
+		const internal = options.internal && !noInternal;
+		const { cacheItem } = options;
+		const _matrix = internal ? null : item._matrix._orNullIfIdentity();
+		const transform = matrix ? matrix._orNullIfIdentity() : _matrix;
+		const cacheKey = cacheItem && !isInheritingStyle() && (transform ? transform.equals(_matrix) : !_matrix) && getBoundsCacheKey(options, internal);
+		const isIntermediate = cacheKey && cacheItem !== item && (item._children || item._definition);
+		let bounds = item._bounds;
+		updateBoundsCache(item._parent || item._symbol, cacheItem);
+		if (isIntermediate) updateBoundsCache(item, cacheItem);
+		if (cacheKey && bounds && cacheKey in bounds) {
+			const cached = bounds[cacheKey];
+			return {
+				rect: cached.rect.clone(),
+				nonscaling: cached.nonscaling
+			};
+		}
+		const res = item._getBounds(transform, isIntermediate ? {
+			...options,
+			cacheItem: item
+		} : options);
+		const rect = res instanceof Rectangle ? res : res.rect;
+		const style = item._style;
+		const nonscaling = !(res instanceof Rectangle) && res.nonscaling || style.hasStroke() && !style.strokeScaling;
+		if (cacheKey) {
+			if (!bounds) item._bounds = bounds = {};
+			bounds[cacheKey] = {
+				rect: rect.clone(),
+				nonscaling,
+				stroke: options.stroke,
+				internal
+			};
+		}
+		return {
+			rect,
+			nonscaling
+		};
+	}
+	function getBoundsCacheKey(options, internal) {
+		return [
+			options.stroke ? 1 : 0,
+			options.handle ? 1 : 0,
+			internal ? 1 : 0
+		].join("");
+	}
+	/**
+	* Returns to correct matrix to use to transform stroke related geometries
+	* when calculating bounds: the item's matrix if {@link Item#strokeScaling} is
+	* `true`, otherwise the parent's inverted view matrix. The returned matrix
+	* is always shiftless, meaning its translation vector is reset to zero.
+	*
+	* @private
+	*/
+	function getStrokeMatrix(item, matrix, options) {
+		const parent = item.strokeScaling ? null : options?.internal ? item : item._parent ?? item._symbol?._item;
+		let mx = parent ? parent.viewMatrix.invert() : matrix;
+		const transform = !parent && options?.transform;
+		if (transform) {
+			for (let owner = item; owner?._applyMatrix; owner = owner._parent) if (owner === transform.item) {
+				mx = transform.matrix.inverted().appended(mx);
+				break;
+			}
+		}
+		return mx?._shiftless();
+	}
+	/**
+	* Set up a boundsCache structure that keeps track of items that keep
+	* cached bounds that depend on an item. We store this in the parent,
+	* for multiple reasons:
+	* The parent receives CHILDREN change notifications for when its
+	* children are added or removed and can thus clear the cache, and we
+	* save a lot of memory, e.g. when grouping 100 items and asking the
+	* group for its bounds. If stored on the children, we would have 100
+	* times the same structure.
+	*
+	* @private
+	*/
+	function updateBoundsCache(parent, item) {
+		if (parent && item) {
+			const id = item._id;
+			const ref = parent._boundsCache ??= {
+				ids: {},
+				list: []
+			};
+			if (!ref.ids[id]) {
+				ref.list.push(item);
+				ref.ids[id] = item;
+			}
+		}
+	}
+	/**
+	* Clears cached bounds of all items that the children of the item are
+	* contributing to. See updateBoundsCache() for an explanation why this
+	* information is stored on parents, not the children themselves.
+	*
+	* @private
+	*/
+	function clearBoundsCache(item) {
+		const cache = item._boundsCache;
+		if (cache) {
+			item._bounds = item._position = item._boundsCache = void 0;
+			for (const other of cache.list) if (other !== item) {
+				other._bounds = other._position = void 0;
+				if (other._boundsCache) clearBoundsCache(other);
+			}
+		}
+	}
+	/**
+	* Gets the combined bounds of all specified items, transformed by the
+	* matrix, or in project coordinates if global is set.
+	*
+	* @private
+	*/
+	function getCombinedBounds(items, matrix, options, global) {
+		let x1 = Infinity;
+		let x2 = -x1;
+		let y1 = x1;
+		let y2 = x2;
+		let nonscaling = false;
+		const opts = options ?? {};
+		for (const item of items) if (item._visible && !item.isEmpty(true)) {
+			const bounds = item._getCachedBounds(global ? item._getGlobalMatrix(true) : matrix?.appended(item._matrix), opts, true);
+			const { rect } = bounds;
+			x1 = Math.min(rect.x, x1);
+			y1 = Math.min(rect.y, y1);
+			x2 = Math.max(rect.x + rect.width, x2);
+			y2 = Math.max(rect.y + rect.height, y2);
+			if (bounds.nonscaling) nonscaling = true;
+		}
+		return {
+			rect: isFinite(x1) ? new Rectangle(x1, y1, x2 - x1, y2 - y1) : new Rectangle(),
+			nonscaling
+		};
+	}
+
+//#endregion
+//#region src/item/effects.ts
+	function insertEffects(item, index, effects) {
+		const list = item._effects ??= [];
+		const inserted = effects.map((effect) => {
+			const instance = new EffectInstance(effect);
+			instance._item = item;
+			return instance;
+		});
+		splice(list, inserted, index, 0);
+		item._changed(Change.ATTRIBUTE);
+		return inserted;
+	}
+	function removeEffects(item, start = 0, end) {
+		const list = item._effects;
+		let removed = [];
+		if (list) {
+			removed = splice(list, null, start, (end ?? list.length) - start);
+			for (const instance of removed) instance._item = instance._index = null;
+			if (removed.length) item._changed(Change.ATTRIBUTE);
+			if (!list.length) item._effects = null;
+		}
+		return removed;
+	}
+	function getEffectOutput(item) {
+		let output = item._effectOutput;
+		if (output === void 0 || item._effectVersion !== Effect._version) {
+			const art = item._hasEffects() && getEffectArt(item);
+			output = art ? item._applyEffects(art) ?? art : null;
+			item._effectOutput = output;
+			item._effectVersion = Effect._version;
+		}
+		return output;
+	}
+	function getEffectArt(item) {
+		const art = item.clone({ insert: false });
+		art.effects = null;
+		art.matrix = new Matrix();
+		function expand(source, copy) {
+			const children = source._children;
+			for (let i = 0, l = children ? children.length : 0; i < l; i++) {
+				const child = children[i];
+				let output = getEffectOutput(child);
+				if (output) {
+					output = output.clone({ insert: false });
+					output.transform(child._matrix);
+					copy._children[i].replaceWith(output);
+				} else expand(child, copy._children[i]);
+			}
+		}
+		expand(item, art);
+		return art;
+	}
+	function getPreviewBounds(item, matrix) {
+		const output = getEffectOutput(item);
+		const children = item._children;
+		if (output || children && hasEffects(item)) {
+			let bounds = null;
+			if (output) bounds = output.strokeBounds;
+			else for (const child of children) if (child._visible) {
+				const rect = getPreviewBounds(child);
+				bounds = bounds ? bounds.unite(rect) : rect;
+			}
+			if (bounds) return (matrix ? matrix.appended(item._matrix) : item._matrix)._transformBounds(bounds);
+		}
+		return item.getStrokeBounds(matrix);
+	}
+	function hasEffects(item) {
+		return item._hasEffects() || !!item._children?.some((child) => hasEffects(child));
 	}
 
 //#endregion
@@ -16028,6 +16139,7 @@ var paper = (function() {
 			} else return new Segment(segment);
 		}
 		static {
+			registerClasses$1({ Segment: this });
 			this.prototype._selection = 0;
 			this.prototype._name = null;
 		}
@@ -16385,6 +16497,7 @@ var paper = (function() {
 			return location;
 		}
 		static {
+			registerClasses$1({ CurveLocation: this });
 			for (const key of Object.keys(curveEvaluators)) if (key !== "point") {
 				const evaluate = `get${capitalize(key)}AtTime`;
 				inject(this.prototype, { get [key]() {
@@ -16558,6 +16671,7 @@ var paper = (function() {
 			return stop === this || stop instanceof StrokeProfileStop && this._width === stop._width && this._aspect === stop._aspect && this._angle === stop._angle && this._smooth === stop._smooth && (this._path ? this._index === stop._index : this._offset === stop._offset) || false;
 		}
 		static {
+			registerClasses$1({ StrokeProfileStop: this });
 			this.prototype._compactSerialize = true;
 		}
 	};
@@ -17205,6 +17319,7 @@ var paper = (function() {
 			return locations;
 		}
 		static {
+			registerClasses$1({ Curve: this });
 			for (const [name, test] of Object.entries({
 				isStraight: hasStraightHandles,
 				isLinear: hasLinearHandles
@@ -17560,6 +17675,7 @@ var paper = (function() {
 			return ok;
 		}
 		static _createGraph(path1, path2) {
+			const { createGraph } = getFeature("boolean");
 			return createGraph(getOperands(path1, path2).map(getRegion));
 		}
 		/**
@@ -17852,6 +17968,7 @@ var paper = (function() {
 			return dashPathItem(this, options);
 		}
 		static {
+			registerClasses$1({ PathItem: this });
 			Object.assign(this.prototype, {
 				_selectBounds: false,
 				_canScaleStroke: true
@@ -18328,6 +18445,7 @@ var paper = (function() {
 			this._version = 0;
 			this._curves = void 0;
 			this._segmentSelection = 0;
+			this._strokeProfile = null;
 		}
 		_equals(item) {
 			return this._closed === item._closed && equals(this._segments, item._segments) && equals(this.strokeProfile, item.strokeProfile);
@@ -19092,6 +19210,7 @@ var paper = (function() {
 			this._curves = null;
 			this._strokeProfile?.reverse();
 			this._changed(Change.GEOMETRY);
+			return this;
 		}
 		flatten(flatness) {
 			const { parts } = new PathFlattener(this, flatness || .25, 256, true);
@@ -19100,6 +19219,7 @@ var paper = (function() {
 			for (let i = 0; i < length; i++) segments.push(new Segment(parts[i].curve.slice(0, 2)));
 			if (!this._closed && length > 0) segments.push(new Segment(parts[length - 1].curve.slice(6)));
 			this.segments = segments;
+			return this;
 		}
 		simplify(options) {
 			const opts = typeof options === "number" ? { tolerance: options } : options ?? {};
@@ -19154,7 +19274,7 @@ var paper = (function() {
 					paddingRight = min(1, length - to - 1);
 				}
 				n += paddingLeft + paddingRight;
-				if (n <= 1) return;
+				if (n <= 1) return this;
 				for (i = 0, j = from - paddingLeft; i <= n; i++, j++) knots[i] = segments[(j < 0 ? j + length : j) % length]._point;
 				let x = knots[0]._x + 2 * knots[1]._x;
 				let y = knots[0]._y + 2 * knots[1]._y;
@@ -19193,6 +19313,7 @@ var paper = (function() {
 					if (loop || i > paddingLeft) segment.handleIn = new Point(-hx, -hy);
 				}
 			} else for (i = from; i <= to; i++) segments[i < 0 ? i + length : i].smooth(opts, !loop && i === from, !loop && i === to);
+			return this;
 		}
 		_getRange(from, to) {
 			const { length } = this._segments;
@@ -19301,7 +19422,7 @@ var paper = (function() {
 				shape.rotate(topCenter.subtract(center).angle + 90, center);
 				shape._matrix.prepend(this._matrix);
 				shape.copyAttributes(this, true);
-				if (insert !== void 0 ? insert : paper$1.settings.insertItems) shape.insertAbove(this);
+				if (insert !== void 0 ? insert : getScope().settings.insertItems) shape.insertAbove(this);
 				return shape;
 			}
 			return null;
@@ -19459,31 +19580,35 @@ var paper = (function() {
 			ctx.beginPath();
 			drawSegments(ctx, this, matrix);
 			ctx.stroke();
-			const { handleSize, segmentSize } = paper$1.settings;
+			const { handleSize, segmentSize } = getScope().settings;
 			drawHandles(ctx, this._segments, matrix, handleSize, segmentSize != null ? segmentSize : handleSize);
 		}
 		moveTo(point, y) {
 			const segments = this._segments;
 			if (segments.length === 1) this.removeSegment(0);
 			if (!segments.length) this._add([new Segment(Point.from(point, y))]);
+			return this;
 		}
 		moveBy() {
 			throw new Error("moveBy() is unsupported on Path items.");
 		}
 		lineTo(point, y) {
 			this._add([new Segment(Point.from(point, y))]);
+			return this;
 		}
 		cubicCurveTo(handle1, handle2, to) {
 			const end = Point.from(to);
 			const current = getCurrentSegment(this);
 			current.handleOut = Point.from(handle1).subtract(current._point);
 			this._add([new Segment(end, Point.from(handle2).subtract(end))]);
+			return this;
 		}
 		quadraticCurveTo(handle, to) {
 			const control = Point.from(handle);
 			const end = Point.from(to);
 			const current = getCurrentSegment(this)._point;
 			this.cubicCurveTo(control.add(current.subtract(control).multiply(1 / 3)), control.add(end.subtract(control).multiply(1 / 3)), end);
+			return this;
 		}
 		curveTo(through, to, time = .5) {
 			const end = Point.from(to);
@@ -19493,6 +19618,7 @@ var paper = (function() {
 			const handle = Point.from(through).subtract(current.multiply(t1 * t1)).subtract(end.multiply(t * t)).divide(2 * t * t1);
 			if (handle.isNaN()) throw new Error(`Cannot put a curve through points with parameter = ${t}`);
 			this.quadraticCurveTo(handle, end);
+			return this;
 		}
 		arcTo(to, arg, rotation, clockwise, large) {
 			const from = getCurrentSegment(this)._point;
@@ -19507,32 +19633,39 @@ var paper = (function() {
 				const radius = Size.from(direction);
 				addArc(this, getEllipticArc(from, end, radius, rotation, !!clockwise, !!large));
 			}
+			return this;
 		}
 		arcAround(center, angle) {
 			const from = getCurrentSegment(this)._point;
 			addArc(this, getArcAround(from, Point.from(center), angle));
+			return this;
 		}
 		arcTowards(point, y) {
 			const current = getCurrentSegment(this);
 			const { previous } = current;
 			const tangent = previous ? new Curve(previous, current).getTangentAtTime(1) : new Point();
 			addArc(this, getArcTowards(current._point, tangent, Point.from(point, y)));
+			return this;
 		}
 		lineBy(point, y) {
 			const current = getCurrentSegment(this)._point;
 			this.lineTo(current.add(Point.from(point, y)));
+			return this;
 		}
 		curveBy(through, to, time) {
 			const current = getCurrentSegment(this)._point;
 			this.curveTo(current.add(through), current.add(to), time);
+			return this;
 		}
 		cubicCurveBy(handle1, handle2, to) {
 			const current = getCurrentSegment(this)._point;
 			this.cubicCurveTo(current.add(handle1), current.add(handle2), current.add(to));
+			return this;
 		}
 		quadraticCurveBy(handle, to) {
 			const current = getCurrentSegment(this)._point;
 			this.quadraticCurveTo(current.add(handle), current.add(to));
+			return this;
 		}
 		arcBy(point, arg) {
 			const current = getCurrentSegment(this)._point;
@@ -19540,10 +19673,12 @@ var paper = (function() {
 			const direction = arg !== void 0 ? arg : true;
 			if (typeof direction === "boolean") this.arcTo(to, direction);
 			else this.arcTo(to, current.add(direction));
+			return this;
 		}
 		closePath(tolerance) {
 			this.closed = true;
 			this.join(this, tolerance);
+			return this;
 		}
 		_getBounds(matrix, options) {
 			const segments = this._segments;
@@ -19638,6 +19773,7 @@ var paper = (function() {
 			return getStrokeProfileAt(this, offset);
 		}
 		static {
+			registerClasses$1({ Path: this });
 			defineDeprecatedConstructors(this, [
 				"line",
 				"circle",
@@ -19950,14 +20086,16 @@ var paper = (function() {
 			const path = current?.isEmpty() ? current : new Path(Item.NO_INSERT);
 			if (path !== current) this.addChild(path);
 			path.moveTo(point, y);
+			return this;
 		}
 		moveBy(point, y) {
 			const last = getCurrentPath(this, true).lastSegment;
 			const vector = Point.from(point, y);
-			this.moveTo(last ? vector.add(last._point) : vector);
+			return this.moveTo(last ? vector.add(last._point) : vector);
 		}
 		closePath(tolerance) {
 			getCurrentPath(this, true).closePath(tolerance);
+			return this;
 		}
 		simplify(options) {
 			let res = false;
@@ -19965,6 +20103,7 @@ var paper = (function() {
 			return res;
 		}
 		static {
+			registerClasses$1({ CompoundPath: this });
 			Object.assign(this.prototype, { _serializeFields: {
 				...PathItem.prototype._serializeFields,
 				children: []
@@ -19984,6 +20123,7 @@ var paper = (function() {
 				"arcBy"
 			]) inject(this.prototype, { [key](...args) {
 				getCurrentPath(this, true)[key](...args);
+				return this;
 			} });
 			for (const key of [
 				"reverse",
@@ -19991,6 +20131,7 @@ var paper = (function() {
 				"smooth"
 			]) inject(this.prototype, { [key](param) {
 				for (const child of this._children) child[key](param);
+				return this;
 			} });
 		}
 	};
@@ -20070,6 +20211,7 @@ var paper = (function() {
 				})
 			};
 		};
+		const { traceGraph } = getFeature("boolean");
 		const paths = [];
 		for (const traced of traceGraph(operands.map(getRegion), operator)) {
 			const path = new Path(Item.NO_INSERT);
@@ -20096,7 +20238,7 @@ var paper = (function() {
 		let result = new CompoundPath(Item.NO_INSERT);
 		result.addChildren(paths);
 		result = result.reduce({ simplify });
-		const { insert = paper$1.settings.insertItems } = options ?? {};
+		const { insert = getScope().settings.insertItems } = options ?? {};
 		if (insert) {
 			let above = path1;
 			const others = [].concat(path2 ?? []);
@@ -20111,6 +20253,7 @@ var paper = (function() {
 	}
 	function traceBoolean(path1, path2, operation, options) {
 		if (options && (options.trace == false || options.stroke) && /^(subtract|intersect)$/.test(operation)) return splitBoolean(path1, path2, operation, options);
+		const { booleanOperators } = getFeature("boolean");
 		let paths;
 		if (operation === "exclude" && Array.isArray(path2) && path2.length > 1) {
 			const items = [path1].concat(path2);
@@ -20152,6 +20295,7 @@ var paper = (function() {
 		const sources = getPaths(_path1);
 		const parts = {};
 		const paths = [];
+		const { splitGraph } = getFeature("boolean");
 		for (const piece of splitGraph(getRegion(_path1).paths, getRegion(_path2))) if (operation === "divide" || piece.isInside !== (operation === "subtract")) {
 			const source = sources[piece.source];
 			if (piece.isWhole) paths.push(source);
@@ -20173,7 +20317,7 @@ var paper = (function() {
 	function reorientPaths(paths, fillRule, clockwise) {
 		if (paths.length) {
 			clockwise ??= paths.reduce((largest, path) => abs$1(path.area) > abs$1(largest.area) ? path : largest).clockwise;
-			const outlines = traceGraph([{
+			const outlines = getFeature("boolean").traceGraph([{
 				fillRule,
 				paths: paths.map((path) => ({
 					...getRegion(path).paths[0],
@@ -20211,6 +20355,7 @@ var paper = (function() {
 //#region src/path/offset.ts
 	const { abs } = Math;
 	function offsetPathItem(item, distance, options) {
+		const { offsetRegion, offsetPath } = getFeature("offset");
 		const join = options?.join || "miter";
 		const miterLimit = options?.miterLimit || 10;
 		const path = prepare(item);
@@ -20262,7 +20407,7 @@ var paper = (function() {
 		return outlinePaths(getDashes(copy._children ?? [copy], style.dashArray, style.dashOffset), style.strokeWidth / 2, style.strokeJoin, style.strokeCap, style.miterLimit).reduce();
 	}
 	function outlinePaths(paths, radius, join, cap, miterLimit) {
-		const region = outlineStroke(paths.map((path) => {
+		const region = getFeature("offset").outlineStroke(paths.map((path) => {
 			const profile = path._strokeProfile;
 			return {
 				...getRegion(path).paths[0],
@@ -20364,7 +20509,7 @@ var paper = (function() {
 		return dashes;
 	}
 	function createResult(item, result, options) {
-		const { insert = paper$1.settings.insertItems } = options ?? {};
+		const { insert = getScope().settings.insertItems } = options ?? {};
 		if (insert) result.insertAbove(item);
 		result.copyAttributes(item, true);
 		return result;
@@ -20405,7 +20550,7 @@ var paper = (function() {
 		const { style } = path;
 		const stroke = style.hasStroke();
 		const strokeRadius = style.strokeWidth / 2;
-		const strokeMatrix = stroke ? path._getStrokeMatrix(matrix, options) : null;
+		const strokeMatrix = stroke ? getStrokeMatrix(path, matrix, options) : null;
 		const strokePadding = stroke && Matrix._getCircleExtents(strokeRadius, strokeMatrix);
 		let bounds = getSegmentBounds(segments, closed, path, matrix, options, strokePadding);
 		if (!stroke) return bounds;
@@ -20486,7 +20631,7 @@ var paper = (function() {
 		let strokePadding;
 		let joinPadding;
 		if (stroke) {
-			const strokeMatrix = path._getStrokeMatrix(matrix, options);
+			const strokeMatrix = getStrokeMatrix(path, matrix, options);
 			const strokeRadius = style.strokeWidth / 2;
 			let joinRadius = strokeRadius;
 			if (style.strokeJoin === "miter") joinRadius = strokeRadius * style.miterLimit;
@@ -20889,6 +21034,7 @@ var paper = (function() {
 			};
 		}
 		static {
+			registerClasses$1({ PathFlattener: this });
 			for (const [key, evaluate] of Object.entries(curveEvaluators)) inject(this.prototype, { [`get${capitalize(key)}At`](offset) {
 				const { index, time } = this.#get(offset);
 				return evaluate(this.#curves[index], time);
@@ -21575,6 +21721,7 @@ var paper = (function() {
 			}
 		}
 		static {
+			registerClasses$1({ TextItem: this });
 			Object.assign(this.prototype, {
 				_applyMatrix: false,
 				_canApplyMatrix: false,
@@ -21620,6 +21767,9 @@ var paper = (function() {
 	* contained in it.
 	*/
 	var PointText = class extends TextItem {
+		static {
+			registerClasses$1({ PointText: this });
+		}
 		constructor(arg, y) {
 			super();
 			const hasProps = isPlainObject(arg) && arg.x === void 0 && arg.y === void 0;
@@ -21778,6 +21928,7 @@ var paper = (function() {
 			return bounds ?? new Rectangle();
 		}
 		static {
+			registerClasses$1({ PathText: this });
 			for (const [name, value] of Object.entries(fields$1)) {
 				const key = `_${name}`;
 				this.prototype[key] = value;
@@ -22190,6 +22341,7 @@ var paper = (function() {
 			return line;
 		}
 		static {
+			registerClasses$1({ AreaText: this });
 			for (const [name, value] of Object.entries(fields)) {
 				const key = `_${name}`;
 				this.prototype[key] = value;
@@ -22527,6 +22679,7 @@ var paper = (function() {
 			return ranges;
 		}
 		static {
+			registerClasses$1({ TextStory: this });
 			Object.assign(this.prototype, {
 				_paragraphKeys: {
 					justification: true,
@@ -22662,6 +22815,7 @@ var paper = (function() {
 			return this.content;
 		}
 		static {
+			registerClasses$1({ TextRange: this });
 			defineStyleAccessors(this);
 			for (const key of [
 				"runs",
@@ -22717,6 +22871,19 @@ var paper = (function() {
 			virtual: {}
 		};
 		_hasInput = false;
+		_dragging = false;
+		_isPrevented = false;
+		_lastPoint = null;
+		#called = false;
+		#prevented = false;
+		#wasInView = false;
+		#downPoint = null;
+		#downItem = null;
+		#overItem = null;
+		#dragItem = null;
+		#clickItem = null;
+		#clickTime = null;
+		#dblClick = false;
 		#scope;
 		#id;
 		#windowEvents;
@@ -22794,7 +22961,7 @@ var paper = (function() {
 			this._matrix = new Matrix();
 			this._matrix._owner = this;
 			if (this._hasInput) View._focused ??= this;
-			this._autoUpdate = !paper$1.agent.node;
+			this._autoUpdate = !getAgent().node;
 		}
 		/**
 		* Removes this view from the project and frees the associated element.
@@ -22848,7 +23015,7 @@ var paper = (function() {
 		* updates are invoked for you automatically at the end.
 		*/
 		requestUpdate() {
-			if (!this._requested && !paper$1.agent.node) {
+			if (!this._requested && !getAgent().node) {
 				requestFrame(() => {
 					this._requested = false;
 					if (this.#animate) {
@@ -23021,7 +23188,7 @@ var paper = (function() {
 			return isInserted(this._element);
 		}
 		getPixelSize(size) {
-			const { agent } = paper$1;
+			const agent = getAgent();
 			const element = this._element;
 			let ctx;
 			let pixels;
@@ -23275,13 +23442,13 @@ var paper = (function() {
 		*/
 		dispatchMouseEvent(type, point, options) {
 			if (!/^mouse(down|move|up)$/.test(type)) throw new Error(`Unknown mouse event type: '${type}'.`);
-			const event = createEvent(type, options || {});
+			const event = createEvent(type, options || {}, this);
 			if (type === "mousedown") {
 				View._focused = this;
-				dragging = true;
+				this._dragging = true;
 			}
 			this._handleMouseEvent(type, event, new Point(point), true);
-			if (type === "mouseup") dragging = false;
+			if (type === "mouseup") this._dragging = false;
 			return event.defaultPrevented;
 		}
 		/**
@@ -23308,7 +23475,7 @@ var paper = (function() {
 		dispatchKeyEvent(type, key, options) {
 			if (!/^key(down|up)$/.test(type)) throw new Error(`Unknown key event type: '${type}'.`);
 			options ||= {};
-			handleKey(type === "keydown", key, options.character, createEvent(type, options), this);
+			handleKey(type === "keydown", key, options.character, createEvent(type, options, this), this);
 		}
 		/**
 		* Private method to handle mouse events, and delegate to items and
@@ -23331,9 +23498,9 @@ var paper = (function() {
 				alt: event.altKey,
 				meta: event.metaKey
 			});
-			if (nativeMove && dragging && responds("mousedrag")) type = "mousedrag";
-			const isLocked = !dispatched && !!lastPoint && getDocument().pointerLockElement === this._element;
-			point ??= isLocked ? lastPoint.add(this.#getOffsetPoint(new Point(event.movementX, event.movementY)).subtract(this.#getOffsetPoint(new Point()))) : this.getEventPoint(event);
+			if (nativeMove && this._dragging && responds("mousedrag")) type = "mousedrag";
+			const isLocked = !dispatched && !!this._lastPoint && getDocument().pointerLockElement === this._element;
+			point ??= isLocked ? this._lastPoint.add(this.#getOffsetPoint(new Point(event.movementX, event.movementY)).subtract(this.#getOffsetPoint(new Point()))) : this.getEventPoint(event);
 			const inView = dispatched || isLocked || event.type !== "pointerleave" && this.bounds.contains(point);
 			const hitItem = (hitItems && inView && this._project.hitTest(point, {
 				tolerance: this.#scope.settings.hitTolerance,
@@ -23342,47 +23509,74 @@ var paper = (function() {
 			}))?.item ?? null;
 			let handle = false;
 			const mouse = { [type.slice(5)]: true };
-			if (hitItems && hitItem !== overItem) {
-				if (overItem) emitMouseEvent(overItem, null, "mouseleave", event, point);
-				if (hitItem) emitMouseEvent(hitItem, null, "mouseenter", event, point);
-				overItem = hitItem;
+			if (hitItems && hitItem !== this.#overItem) {
+				if (this.#overItem) this.#emitMouseEvent(this.#overItem, null, "mouseleave", event, point);
+				if (hitItem) this.#emitMouseEvent(hitItem, null, "mouseenter", event, point);
+				this.#overItem = hitItem;
 			}
-			const hasCrossed = wasInView !== inView;
+			const hasCrossed = this.#wasInView !== inView;
 			if (hasCrossed) {
-				emitMouseEvent(this, null, inView ? "mouseenter" : "mouseleave", event, point);
+				this.#emitMouseEvent(this, null, inView ? "mouseenter" : "mouseleave", event, point);
 				handle = true;
 			}
-			if ((inView || mouse.drag) && !point.equals(lastPoint)) {
-				emitMouseEvents(this, hitItem, nativeMove ? type : "mousemove", event, point, lastPoint);
+			if ((inView || mouse.drag) && !point.equals(this._lastPoint)) {
+				this.#emitMouseEvents(hitItem, nativeMove ? type : "mousemove", event, point, this._lastPoint);
 				handle = true;
 			}
-			wasInView = inView;
-			if (mouse.down && inView || mouse.up && downPoint) {
-				emitMouseEvents(this, hitItem, type, event, point, downPoint);
+			this.#wasInView = inView;
+			if (mouse.down && inView || mouse.up && this.#downPoint) {
+				this.#emitMouseEvents(hitItem, type, event, point, this.#downPoint);
 				if (mouse.down) {
 					const time = Date.now();
-					dblClick = !dblClick && hitItem === clickItem && time - clickTime < 300 && point.getDistance(downPoint) < 3;
-					downItem = clickItem = hitItem;
-					clickTime = time;
-					if (!prevented && hitItem) {
+					this.#dblClick = !this.#dblClick && hitItem === this.#clickItem && time - this.#clickTime < 300 && point.getDistance(this.#downPoint) < 3;
+					this.#downItem = this.#clickItem = hitItem;
+					this.#clickTime = time;
+					if (!this.#prevented && hitItem) {
 						let item = hitItem;
 						while (item && !item.responds("mousedrag")) item = item._parent;
-						if (item) dragItem = hitItem;
+						if (item) this.#dragItem = hitItem;
 					}
-					downPoint = point;
+					this.#downPoint = point;
 				} else if (mouse.up) {
-					if (!prevented && hitItem === downItem) emitMouseEvents(this, hitItem, dblClick ? "doubleclick" : "click", event, point, downPoint);
-					downItem = dragItem = null;
+					if (!this.#prevented && hitItem === this.#downItem) this.#emitMouseEvents(hitItem, this.#dblClick ? "doubleclick" : "click", event, point, this.#downPoint);
+					this.#downItem = this.#dragItem = null;
 				}
 				handle = true;
 			}
-			lastPoint = point;
+			this._lastPoint = point;
 			if (handle && tool) {
 				if (hasCrossed && inView) tool._handleMouseEvent("mouseenter", event, point, { enter: true });
-				called = tool._handleMouseEvent(type, event, point, mouse) || called;
+				this.#called = tool._handleMouseEvent(type, event, point, mouse) || this.#called;
 				if (hasCrossed && !inView) tool._handleMouseEvent("mouseleave", event, point, { leave: true });
 			}
-			if (event.cancelable !== false && (called && !mouse.move || mouse.down && needsUp(hitItem))) event.preventDefault();
+			if (event.cancelable !== false && (this.#called && !mouse.move || mouse.down && needsUp(hitItem))) event.preventDefault();
+		}
+		#emitMouseEvent(obj, target, type, event, point, prevPoint, stopItem) {
+			let stopped = false;
+			let mouseEvent;
+			const emit = (obj, type) => {
+				if (obj.responds(type)) {
+					mouseEvent ??= new MouseEvent(type, event, point, target || obj, prevPoint ? point.subtract(prevPoint) : null);
+					if (obj.emit(type, mouseEvent)) {
+						this.#called = true;
+						if (mouseEvent.prevented) this.#prevented = true;
+						if (mouseEvent.stopped) return stopped = true;
+					}
+				} else {
+					const fallback = fallbacks[type];
+					if (fallback) return emit(obj, fallback);
+				}
+			};
+			while (obj && obj !== stopItem) {
+				if (emit(obj, type)) break;
+				obj = obj._parent;
+			}
+			return stopped;
+		}
+		#emitMouseEvents(hitItem, type, event, point, prevPoint) {
+			this._project.removeOn(type);
+			this.#prevented = this.#called = false;
+			return this.#dragItem && this.#emitMouseEvent(this.#dragItem, null, type, event, point, prevPoint) || hitItem && hitItem !== this.#dragItem && !hitItem.isDescendant(this.#dragItem) && this.#emitMouseEvent(hitItem, null, type === "mousedrag" ? "mousemove" : type, event, point, prevPoint, this.#dragItem) || this.#emitMouseEvent(this, this.#dragItem || hitItem || this, type, event, point, prevPoint);
 		}
 		/**
 		* Private method to handle key events.
@@ -23417,21 +23611,17 @@ var paper = (function() {
 		*/
 		static updateFocus = updateFocus;
 		/**
-		* Clear all events handling state information. Made for testing
-		* purpose, to have a way to start with a fresh state before each
-		* test.
+		* Clear the focus that the views share, as the views keep the rest of the
+		* state of the events. Made for testing purpose, to have a way to start
+		* with a fresh state before each test.
 		*
 		* @private
 		*/
 		static _resetState() {
-			dragging = isPrevented = called = wasInView = false;
-			prevFocus = tempFocus = null;
-			downPoint = lastPoint = null;
-			downItem = overItem = dragItem = clickItem = null;
-			clickTime = null;
-			dblClick = null;
+			View._focused = prevFocus = tempFocus = null;
 		}
 		static {
+			registerClasses$1({ View: this });
 			defineEvents(this, {
 				onFrame: {
 					install() {
@@ -23466,23 +23656,10 @@ var paper = (function() {
 	let viewEvents = {};
 	let prevFocus;
 	let tempFocus;
-	let dragging = false;
-	let isPrevented = false;
-	let called = false;
-	let prevented = false;
 	const fallbacks = {
 		doubleclick: "click",
 		mousedrag: "mousemove"
 	};
-	let wasInView = false;
-	let downPoint;
-	let lastPoint;
-	let downItem;
-	let overItem;
-	let dragItem;
-	let clickItem;
-	let clickTime;
-	let dblClick;
 	const itemEventsMap = {
 		mousedown: {
 			mousedown: 1,
@@ -23510,18 +23687,18 @@ var paper = (function() {
 			defineEvents(View, Object.fromEntries(Item._itemHandlers.map((name) => [name, {}])));
 			viewEvents = {
 				"pointerdown"(event) {
-					if (event.isPrimary && !dragging) {
+					if (event.isPrimary && !View._focused?._dragging) {
 						const view = View._focused = getView(event);
-						dragging = true;
+						view._dragging = true;
 						if (event.isTrusted) view._element.setPointerCapture(event.pointerId);
 						view._handleMouseEvent("mousedown", event);
-						isPrevented = event.defaultPrevented;
+						view._isPrevented = event.defaultPrevented;
 					}
 				},
 				"pointermove"(event) {
 					if (event.isPrimary) {
 						const view = getView(event);
-						if (dragging) View._focused._handleMouseEvent("mousemove", event);
+						if (View._focused?._dragging) View._focused._handleMouseEvent("mousemove", event);
 						else if (!event.buttons || view === View._focused) {
 							if (view !== View._focused) {
 								prevFocus ??= View._focused;
@@ -23532,9 +23709,9 @@ var paper = (function() {
 					}
 				},
 				"pointerleave"(event) {
-					if (event.isPrimary && !dragging) {
+					if (event.isPrimary && !View._focused?._dragging) {
 						const view = getView(event);
-						view._handleMouseEvent("mousemove", event, event.pointerType === "touch" ? lastPoint : void 0);
+						view._handleMouseEvent("mousemove", event, event.pointerType === "touch" ? view._lastPoint : void 0);
 						if (tempFocus === view) {
 							View._focused = prevFocus?.isInserted() ? prevFocus : null;
 							prevFocus = null;
@@ -23543,13 +23720,14 @@ var paper = (function() {
 					}
 				},
 				"pointerup pointercancel"(event) {
-					if (event.isPrimary && dragging) {
-						View._focused._handleMouseEvent("mouseup", event, event.type === "pointercancel" ? lastPoint : void 0);
-						dragging = false;
+					const view = View._focused;
+					if (event.isPrimary && view?._dragging) {
+						view._handleMouseEvent("mouseup", event, event.type === "pointercancel" ? view._lastPoint : void 0);
+						view._dragging = false;
 					}
 				},
 				"touchstart"(event) {
-					if (isPrevented && event.cancelable) event.preventDefault();
+					if (View._focused?._isPrevented && event.cancelable) event.preventDefault();
 				}
 			};
 		}
@@ -23573,36 +23751,9 @@ var paper = (function() {
 			}
 		}
 	}
-	function emitMouseEvent(obj, target, type, event, point, prevPoint, stopItem) {
-		let stopped = false;
-		let mouseEvent;
-		function emit(obj, type) {
-			if (obj.responds(type)) {
-				mouseEvent ??= new MouseEvent(type, event, point, target || obj, prevPoint ? point.subtract(prevPoint) : null);
-				if (obj.emit(type, mouseEvent)) {
-					called = true;
-					if (mouseEvent.prevented) prevented = true;
-					if (mouseEvent.stopped) return stopped = true;
-				}
-			} else {
-				const fallback = fallbacks[type];
-				if (fallback) return emit(obj, fallback);
-			}
-		}
-		while (obj && obj !== stopItem) {
-			if (emit(obj, type)) break;
-			obj = obj._parent;
-		}
-		return stopped;
-	}
-	function emitMouseEvents(view, hitItem, type, event, point, prevPoint) {
-		view._project.removeOn(type);
-		prevented = called = false;
-		return dragItem && emitMouseEvent(dragItem, null, type, event, point, prevPoint) || hitItem && hitItem !== dragItem && !hitItem.isDescendant(dragItem) && emitMouseEvent(hitItem, null, type === "mousedrag" ? "mousemove" : type, event, point, prevPoint, dragItem) || emitMouseEvent(view, dragItem || hitItem || view, type, event, point, prevPoint);
-	}
-	function createEvent(type, options) {
+	function createEvent(type, options, view) {
 		if (options.modifiers) Object.assign(Key.modifiers, options.modifiers);
-		const buttons = options.buttons ?? (type === "mousedown" || type === "mousemove" && dragging ? 1 : 0);
+		const buttons = options.buttons ?? (type === "mousedown" || type === "mousemove" && view._dragging ? 1 : 0);
 		return {
 			type,
 			timeStamp: options.time != null ? options.time * 1e3 : Date.now(),
@@ -23625,6 +23776,9 @@ var paper = (function() {
 	* @private
 	*/
 	var CanvasView = class extends View {
+		static {
+			registerClasses$1({ CanvasView: this });
+		}
 		constructor(project, canvas) {
 			let element;
 			if (canvas instanceof getWindow().HTMLCanvasElement) element = canvas;
@@ -23693,6 +23847,9 @@ var paper = (function() {
 	* such as {@link MouseEvent}, {@link ToolEvent} and {@link KeyEvent}.
 	*/
 	var Event = class extends Base {
+		static {
+			registerClasses$1({ Event: this });
+		}
 		event;
 		type;
 		prevented = false;
@@ -23762,6 +23919,9 @@ var paper = (function() {
 	* to these functions and contains information about the mouse event.
 	*/
 	var MouseEvent = class extends Event {
+		static {
+			registerClasses$1({ MouseEvent: this });
+		}
 		/**
 		* The position of the mouse in project coordinates when the event was
 		* fired.
@@ -23831,6 +23991,9 @@ var paper = (function() {
 	* the keyboard event.
 	*/
 	var KeyEvent = class extends Event {
+		static {
+			registerClasses$1({ KeyEvent: this });
+		}
 		/**
 		* The character representation of the key that caused this key event,
 		* taking into account the current key-modifiers (e.g. shift, control,
@@ -23867,6 +24030,9 @@ var paper = (function() {
 	* describe its fields.
 	*/
 	var DrawEvent = class extends Base {
+		static {
+			registerClasses$1({ DrawEvent: this });
+		}
 		prevented = false;
 		constructor(props) {
 			super();
@@ -23919,7 +24085,7 @@ var paper = (function() {
 			return this.alt;
 		} },
 		command: { get() {
-			return paper$1?.agent.mac ? this.meta : this.control;
+			return getAgent().mac ? this.meta : this.control;
 		} },
 		toString: { value() {
 			return `{ ${Object.entries(this).map(([key, value]) => `${key}: ${value}`).join(", ")} }`;
@@ -24030,7 +24196,7 @@ var paper = (function() {
 		const name = key.length > 1 && camelize(key);
 		if (name && name in modifiers) {
 			modifiers[name] = down;
-			if (name === "meta" && paper$1?.agent.mac) {
+			if (name === "meta" && getAgent().mac) {
 				if (down) metaFixMap = {};
 				else {
 					for (const pressed in metaFixMap) if (pressed in charMap) handleKey(false, pressed, metaFixMap[pressed], event, view);
@@ -24056,6 +24222,9 @@ var paper = (function() {
 	* information about the mouse event.
 	*/
 	var ToolEvent = class extends Event {
+		static {
+			registerClasses$1({ ToolEvent: this });
+		}
 		/**
 		* The tool that fired the event.
 		*/
@@ -24424,6 +24593,7 @@ var paper = (function() {
 			return called;
 		}
 		static {
+			registerClasses$1({ Tool: this });
 			Object.assign(this.prototype, {
 				_list: "tools",
 				_reference: "tool"
@@ -24718,6 +24888,7 @@ var paper = (function() {
 			if (destination) destination[path[path.length - 1]] = value;
 		}
 		static {
+			registerClasses$1({ Tween: this });
 			defineEvents(this, { onUpdate: {} });
 		}
 	};
@@ -24847,11 +25018,7 @@ var paper = (function() {
 
 //#endregion
 //#region src/svg/svgExport.ts
-	let definitions$1;
-	let formatter;
-	let parentStyles;
-	let elementMatrix;
-	function getTransform(matrix, coordinates, center) {
+	function getTransform(matrix, options, coordinates, center) {
 		const attrs = {};
 		let { translation } = matrix;
 		if (coordinates) {
@@ -24869,20 +25036,20 @@ var paper = (function() {
 			if (decomposed) {
 				const parts = [];
 				const { rotation: angle, scaling: scale, skewing: skew } = decomposed;
-				if (translation && !translation.isZero()) parts.push(`translate(${formatter.point(translation)})`);
-				if (angle) parts.push(`rotate(${formatter.number(angle)})`);
-				if (!isZero(scale.x - 1) || !isZero(scale.y - 1)) parts.push(`scale(${formatter.point(scale)})`);
-				if (skew.x) parts.push(`skewX(${formatter.number(skew.x)})`);
-				if (skew.y) parts.push(`skewY(${formatter.number(skew.y)})`);
+				if (translation && !translation.isZero()) parts.push(`translate(${options.formatter.point(translation)})`);
+				if (angle) parts.push(`rotate(${options.formatter.number(angle)})`);
+				if (!isZero(scale.x - 1) || !isZero(scale.y - 1)) parts.push(`scale(${options.formatter.point(scale)})`);
+				if (skew.x) parts.push(`skewX(${options.formatter.number(skew.x)})`);
+				if (skew.y) parts.push(`skewY(${options.formatter.number(skew.y)})`);
 				attrs.transform = parts.join(" ");
 			} else attrs.transform = `matrix(${matrix.values.join(",")})`;
 		}
-		elementMatrix = matrix;
+		options.elementMatrix = matrix;
 		return attrs;
 	}
 	function exportGroup(item, options) {
-		const attrs = getTransform(item._matrix);
-		const node = createSvgElement("g", attrs, formatter);
+		const attrs = getTransform(item._matrix, options);
+		const node = createSvgElement("g", attrs, options.formatter);
 		for (const child of item._children) if (child.clipMask) {
 			const clip = exportClip(child, options);
 			setDefinition(child, clip, "clip", options);
@@ -24911,28 +25078,28 @@ var paper = (function() {
 		return clip;
 	}
 	function exportRaster(item, options) {
-		const attrs = getTransform(item._matrix, true);
+		const attrs = getTransform(item._matrix, options, true);
 		const { size, image } = item;
 		const href = options.embedImages == false && image && "src" in image && image.src || item.toDataURL();
 		attrs.x -= size.width / 2;
 		attrs.y -= size.height / 2;
 		if (options.reuseImages) {
-			let node = getDefinition$2(href, "image");
+			let node = getDefinition$2(href, "image", options);
 			if (!node) {
 				node = createSvgElement("image", {
 					width: size.width,
 					height: size.height,
 					href
-				}, formatter);
+				}, options.formatter);
 				setDefinition(href, node, "image", options);
 			}
 			attrs.href = `#${node.id}`;
-			return createSvgElement("use", attrs, formatter);
+			return createSvgElement("use", attrs, options.formatter);
 		} else {
 			attrs.width = size.width;
 			attrs.height = size.height;
 			attrs.href = href;
-			return createSvgElement("image", attrs, formatter);
+			return createSvgElement("image", attrs, options.formatter);
 		}
 	}
 	function exportPath(item, options) {
@@ -24940,16 +25107,16 @@ var paper = (function() {
 		const segmentsData = getSegmentsData(item);
 		if (matchShapes && !segmentsData) {
 			const shape = item.toShape(false);
-			if (shape) return exportShape(shape);
+			if (shape) return exportShape(shape, options);
 		}
 		const segments = item._segments;
 		const { length } = segments;
 		let type;
-		const attrs = getTransform(item._matrix);
+		const attrs = getTransform(item._matrix, options);
 		if (matchShapes && length >= 2 && !item.hasHandles()) {
 			if (length > 2) {
 				type = item._closed ? "polygon" : "polyline";
-				attrs.points = segments.map((segment) => formatter.point(segment._point)).join(" ");
+				attrs.points = segments.map((segment) => options.formatter.point(segment._point)).join(" ");
 			} else {
 				type = "line";
 				const start = segments[0]._point;
@@ -24966,12 +25133,12 @@ var paper = (function() {
 			attrs.d = getPathData(item, options.precision);
 		}
 		if (segmentsData) attrs["data-paper-segments"] = segmentsData;
-		return createSvgElement(type, attrs, formatter);
+		return createSvgElement(type, attrs, options.formatter);
 	}
-	function exportShape(item) {
+	function exportShape(item, options) {
 		let type = item._type;
 		let radius = item._radius;
-		const attrs = getTransform(item._matrix, true, type !== "rectangle");
+		const attrs = getTransform(item._matrix, options, true, type !== "rectangle");
 		if (type === "rectangle") {
 			type = "rect";
 			const { width, height } = item._size;
@@ -24988,15 +25155,15 @@ var paper = (function() {
 				attrs.ry = radius.height;
 			}
 		}
-		return createSvgElement(type, attrs, formatter);
+		return createSvgElement(type, attrs, options.formatter);
 	}
 	function exportCompoundPath(item, options) {
-		const attrs = getTransform(item._matrix);
+		const attrs = getTransform(item._matrix, options);
 		const data = getPathData(item, options.precision);
 		const segmentsData = getSegmentsData(item);
 		if (data) attrs.d = data;
 		if (segmentsData) attrs["data-paper-segments"] = segmentsData;
-		return createSvgElement("path", attrs, formatter);
+		return createSvgElement("path", attrs, options.formatter);
 	}
 	function getSegmentsData(item) {
 		const paths = item._children ?? [item];
@@ -25017,13 +25184,13 @@ var paper = (function() {
 		return entries && JSON.stringify(entries);
 	}
 	function exportSymbolItem(item, options) {
-		const attrs = getTransform(item._matrix, true);
+		const attrs = getTransform(item._matrix, options, true);
 		const definition = item._definition;
-		let node = getDefinition$2(definition, "symbol");
+		let node = getDefinition$2(definition, "symbol", options);
 		const definitionItem = definition._item;
 		const bounds = definitionItem.strokeBounds;
 		if (!node) {
-			node = createSvgElement("symbol", { viewBox: formatter.rectangle(bounds) });
+			node = createSvgElement("symbol", { viewBox: options.formatter.rectangle(bounds) });
 			node.appendChild(exportSVG(definitionItem, {
 				...options,
 				isInSymbol: true
@@ -25036,14 +25203,14 @@ var paper = (function() {
 		attrs.width = bounds.width;
 		attrs.height = bounds.height;
 		attrs.overflow = "visible";
-		return createSvgElement("use", attrs, formatter);
+		return createSvgElement("use", attrs, options.formatter);
 	}
 	function exportGradient(color, options) {
-		if (!elementMatrix.isIdentity()) {
+		if (!options.elementMatrix.isIdentity()) {
 			color = color.clone();
-			color.transform(elementMatrix.inverted());
+			color.transform(options.elementMatrix.inverted());
 		}
-		let gradientNode = getDefinition$2(color, "color");
+		let gradientNode = getDefinition$2(color, "color", options);
 		if (!gradientNode) {
 			const { gradient, origin, destination } = color;
 			const radial = gradient._radial;
@@ -25058,7 +25225,7 @@ var paper = (function() {
 					const local = new Matrix().translate(origin).rotate(angle).scale(1, aspect);
 					center = new Point();
 					if (highlight) highlight = local._inverseTransform(highlight);
-					attrs.gradientTransform = `translate(${formatter.point(origin)}) rotate(${formatter.number(angle)}) scale(1,${formatter.number(aspect)})`;
+					attrs.gradientTransform = `translate(${options.formatter.point(origin)}) rotate(${options.formatter.number(angle)}) scale(1,${options.formatter.number(aspect)})`;
 				}
 				attrs.cx = center.x;
 				attrs.cy = center.y;
@@ -25073,7 +25240,7 @@ var paper = (function() {
 				y2: destination.y
 			};
 			attrs.gradientUnits = "userSpaceOnUse";
-			gradientNode = createSvgElement(`${radial ? "radial" : "linear"}Gradient`, attrs, formatter);
+			gradientNode = createSvgElement(`${radial ? "radial" : "linear"}Gradient`, attrs, options.formatter);
 			const stops = gradient._stops;
 			for (let i = 0, l = stops.length; i < l; i++) {
 				const { _color: stopColor, _offset: offset } = stops[i];
@@ -25081,35 +25248,35 @@ var paper = (function() {
 				attrs = { offset: offset == null ? i / (l - 1) : offset };
 				if (stopColor) attrs["stop-color"] = stopColor.toCSS(true);
 				if (alpha < 1) attrs["stop-opacity"] = alpha;
-				gradientNode.appendChild(createSvgElement("stop", attrs, formatter));
+				gradientNode.appendChild(createSvgElement("stop", attrs, options.formatter));
 			}
 			setDefinition(color, gradientNode, "color", options);
 		}
 		return `url(#${gradientNode.id})`;
 	}
 	function exportPattern(color, options) {
-		const matrix = elementMatrix;
+		const matrix = options.elementMatrix;
 		if (!matrix.isIdentity()) {
 			color = color.clone();
 			color.transform(matrix.inverted());
 		}
-		let patternNode = getDefinition$2(color, "pattern");
+		let patternNode = getDefinition$2(color, "pattern", options);
 		if (!patternNode) {
 			const { pattern } = color;
 			const { _item: item, tile, spacing } = pattern;
 			const cell = new Rectangle(tile.point, tile.size.add(spacing));
-			const { transform } = getTransform(color.matrix);
+			const { transform } = getTransform(color.matrix, options);
 			const attrs = {
 				x: cell.x,
 				y: cell.y,
 				width: cell.width,
 				height: cell.height,
-				viewBox: formatter.rectangle(cell),
+				viewBox: options.formatter.rectangle(cell),
 				patternUnits: "userSpaceOnUse"
 			};
 			let content = exportSVG(item, options);
 			if (transform) attrs.patternTransform = transform;
-			patternNode = createSvgElement("pattern", attrs, formatter);
+			patternNode = createSvgElement("pattern", attrs, options.formatter);
 			if (!spacing.isZero() && !tile.contains(item.strokeBounds)) {
 				const rect = Shape.rectangle({
 					rectangle: tile,
@@ -25125,7 +25292,7 @@ var paper = (function() {
 			patternNode.appendChild(content);
 			setDefinition(color, patternNode, "pattern", options);
 		}
-		elementMatrix = matrix;
+		options.elementMatrix = matrix;
 		return `url(#${patternNode.id})`;
 	}
 	function exportShadow(item, options) {
@@ -25138,14 +25305,14 @@ var paper = (function() {
 		const region = new Matrix().scale(100 / box.width, 100 / box.height).translate(box.point.negate())._transformBounds(rect);
 		const filter = createSvgElement("filter");
 		function add(type, attrs) {
-			filter.appendChild(createSvgElement(type, attrs, formatter));
+			filter.appendChild(createSvgElement(type, attrs, options.formatter));
 		}
 		for (const key of [
 			"x",
 			"y",
 			"width",
 			"height"
-		]) filter.setAttribute(key, `${formatter.number(region[key])}%`);
+		]) filter.setAttribute(key, `${options.formatter.number(region[key])}%`);
 		if (deviation > 0) add("feGaussianBlur", {
 			in: "SourceAlpha",
 			stdDeviation: deviation,
@@ -25177,8 +25344,8 @@ var paper = (function() {
 		return `url(#${filter.id})`;
 	}
 	function exportText(item, options) {
-		const attrs = getTransform(item._matrix, true);
-		const node = createSvgElement("text", attrs, formatter);
+		const attrs = getTransform(item._matrix, options, true);
+		const node = createSvgElement("text", attrs, options.formatter);
 		const story = item._story;
 		const lines = item._getLayout();
 		const isPointText = item instanceof PointText;
@@ -25191,7 +25358,7 @@ var paper = (function() {
 					if (value !== void 0) setAttributes(spanAttrs, [], entry, value, options);
 				}
 			}
-			const span = createSvgElement("tspan", spanAttrs, formatter);
+			const span = createSvgElement("tspan", spanAttrs, options.formatter);
 			if (content != null) span.textContent = content;
 			return span;
 		}
@@ -25227,7 +25394,7 @@ var paper = (function() {
 				const span = createSvgElement("tspan", Object.assign({
 					x: attrs.x + line.x,
 					y: attrs.y + line.y
-				}, anchor), formatter);
+				}, anchor), options.formatter);
 				for (const piece of line.pieces) {
 					const angle = piece.rotation;
 					const origin = new Point(piece.dx || 0, 0).rotate(angle).add(piece.x, line.y + piece.y);
@@ -25291,7 +25458,7 @@ var paper = (function() {
 	function applyStyle(item, node, options, isRoot) {
 		const attrs = {};
 		const parent = !isRoot && item.parent;
-		const parentStyle = parent && (parentStyles[parent._id] ??= {});
+		const parentStyle = parent && (options.parentStyles[parent._id] ??= {});
 		const isGroup = item instanceof Group;
 		const style = [];
 		if (item._name != null) attrs.id = item._name;
@@ -25306,46 +25473,35 @@ var paper = (function() {
 		if (filter) attrs.filter = filter;
 		if (style.length) attrs.style = style.join(";");
 		if (!item._visible) attrs.visibility = "hidden";
-		return setSvgAttributes(node, attrs, formatter);
+		return setSvgAttributes(node, attrs, options.formatter);
 	}
-	function getDefinition$2(item, type) {
-		definitions$1 ??= {
-			ids: {},
-			svgs: {}
-		};
-		return item && definitions$1.svgs[getDefinitionKey(item, type)];
+	function getDefinition$2(item, type, options) {
+		return options.definitions.svgs[getDefinitionKey(item, type)];
 	}
 	function setDefinition(item, node, type, options) {
-		if (!definitions$1) getDefinition$2(null);
-		const typeId = definitions$1.ids[type] = (definitions$1.ids[type] || 0) + 1;
+		const { ids, svgs } = options.definitions;
+		const typeId = ids[type] = (ids[type] || 0) + 1;
 		node.id = `${options.idPrefix || ""}${type}-${typeId}`;
-		definitions$1.svgs[getDefinitionKey(item, type)] = node;
+		svgs[getDefinitionKey(item, type)] = node;
 	}
 	function getDefinitionKey(item, type) {
 		return `${type}-${typeof item === "string" ? item : item._id || item.__id || (item.__id = getUID("svg"))}`;
 	}
 	function exportDefinitions(node, options) {
 		let svg = node;
-		let defs = null;
-		if (definitions$1) {
-			svg = node.nodeName.toLowerCase() === "svg" && node;
-			for (const definition of Object.values(definitions$1.svgs)) {
-				if (!defs) {
-					if (!svg) {
-						svg = createSvgElement("svg");
-						svg.appendChild(node);
-					}
-					defs = svg.insertBefore(createSvgElement("defs"), svg.firstChild);
-				}
-				defs.appendChild(definition);
+		const definitions = Object.values(options.definitions.svgs);
+		if (definitions.length) {
+			if (node.nodeName.toLowerCase() !== "svg") {
+				svg = createSvgElement("svg");
+				svg.appendChild(node);
 			}
-			definitions$1 = null;
+			const defs = svg.insertBefore(createSvgElement("defs"), svg.firstChild);
+			for (const definition of definitions) defs.appendChild(definition);
 		}
-		parentStyles = null;
 		return options.asString ? new (getDocument()).defaultView.XMLSerializer().serializeToString(svg).replace(/<defs>|<\/filter>|<\/defs>/g, "$&\n") : svg;
 	}
 	function exportSVG(item, options, isRoot) {
-		let output = item.getEffectOutput();
+		let output = getEffectOutput(item);
 		if (output) {
 			output = output.clone({ insert: false });
 			output.transform(item._matrix);
@@ -25366,15 +25522,21 @@ var paper = (function() {
 		return node && applyStyle(item, node, options, isRoot);
 	}
 	function setOptions(options) {
-		options ??= {};
-		formatter = new Formatter(options.precision);
-		parentStyles = {};
-		return options;
+		return {
+			...options,
+			formatter: new Formatter(options?.precision),
+			definitions: {
+				ids: {},
+				svgs: {}
+			},
+			parentStyles: {},
+			elementMatrix: null
+		};
 	}
 	function exportRoot(items, view, bounds, options) {
 		const mx = options.matrix || bounds === "view" && view._matrix;
 		const matrix = mx ? new Matrix(mx) : null;
-		const rect = bounds === "view" ? new Rectangle([0, 0], view.viewSize) : bounds === "content" ? Item._getBounds(items, matrix, { stroke: true }).rect : bounds && Rectangle.from(bounds);
+		const rect = bounds === "view" ? new Rectangle([0, 0], view.viewSize) : bounds === "content" ? getCombinedBounds(items, matrix, { stroke: true }).rect : bounds && Rectangle.from(bounds);
 		const attrs = {
 			"version": "1.1",
 			"xmlns": svgNamespace,
@@ -25383,11 +25545,11 @@ var paper = (function() {
 		if (rect) {
 			attrs.width = rect.width;
 			attrs.height = rect.height;
-			if (rect.x || rect.x === 0 || rect.y || rect.y === 0) attrs.viewBox = formatter.rectangle(rect);
+			if (rect.x || rect.x === 0 || rect.y || rect.y === 0) attrs.viewBox = options.formatter.rectangle(rect);
 		}
-		const node = createSvgElement("svg", attrs, formatter);
+		const node = createSvgElement("svg", attrs, options.formatter);
 		let parent = node;
-		if (matrix && !matrix.isIdentity()) parent = node.appendChild(createSvgElement("g", getTransform(matrix), formatter));
+		if (matrix && !matrix.isIdentity()) parent = node.appendChild(createSvgElement("g", getTransform(matrix, options), options.formatter));
 		for (const item of items) parent.appendChild(exportSVG(item, options, true));
 		return exportDefinitions(node, options);
 	}
@@ -25572,7 +25734,7 @@ var paper = (function() {
 			return raster;
 		},
 		"symbol"(node, type, options, isRoot) {
-			const { project } = paper$1;
+			const { project } = getScope();
 			const style = project._currentStyle;
 			project._currentStyle = new Style(null, null, project);
 			try {
@@ -25590,7 +25752,7 @@ var paper = (function() {
 			if (definition instanceof SymbolDefinition) item = definition.place(point);
 			else if (definition && !used[id]) {
 				used[id] = true;
-				const { project } = paper$1;
+				const { project } = getScope();
 				const currentStyle = project._currentStyle;
 				project._currentStyle = new Style(applyAttributes(new Group(), node, options)._style);
 				try {
@@ -25891,7 +26053,7 @@ var paper = (function() {
 		let parent;
 		let next;
 		if (isRoot && isElement) {
-			rootSize = paper$1.view.size;
+			rootSize = getScope().view.size;
 			rootSize = getSize(node, null, null, true) ?? rootSize;
 			container = createSvgElement("svg", { style: "stroke-width: 1px; stroke-miterlimit: 10" });
 			parent = node.parentNode;
@@ -25899,7 +26061,7 @@ var paper = (function() {
 			container.appendChild(node);
 			getSandbox().appendChild(container);
 		}
-		const { settings } = paper$1;
+		const { settings } = getScope();
 		const { applyMatrix, insertItems } = settings;
 		const importer = importers[type];
 		let item = null;
@@ -25973,7 +26135,7 @@ var paper = (function() {
 	function importSVG(source, options, owner) {
 		if (!source) return null;
 		const importOptions = typeof options === "function" ? { onLoad: options } : options ?? {};
-		const scope = paper$1;
+		const scope = getScope();
 		let item = null;
 		function onLoad(svg) {
 			try {
@@ -26060,6 +26222,7 @@ var paper = (function() {
 		}
 		_draw() {}
 		static {
+			registerClasses$1({ HostItem: this });
 			Object.assign(this.prototype, {
 				_applyMatrix: false,
 				_canApplyMatrix: false,
@@ -26266,12 +26429,12 @@ var paper = (function() {
 					handle
 				};
 				const rect = this._getHostBounds(options);
-				bounds[this._getBoundsCacheKey(options, true)] = {
+				bounds[getBoundsCacheKey(options, true)] = {
 					rect,
 					nonscaling,
 					internal: true
 				};
-				if (isIdentity) bounds[this._getBoundsCacheKey(options, false)] = {
+				if (isIdentity) bounds[getBoundsCacheKey(options, false)] = {
 					rect: rect.clone(),
 					nonscaling,
 					internal: false
@@ -26555,8 +26718,8 @@ var paper = (function() {
 						if (reload) reloads.push(reload);
 						if (flags & recordFlags.children) item._reloadChildren();
 						if ((names[i] || void 0) !== item._name) item.name = names[i] || null;
-						if (item._parent) Item._clearBoundsCache(item._parent);
-						Item._clearBoundsCache(item);
+						if (item._parent) clearBoundsCache(item._parent);
+						clearBoundsCache(item);
 						setRecord(item, columns, i);
 						item._globalMatrix = item._position = void 0;
 						this._updateSelection(item);
@@ -26702,16 +26865,16 @@ var paper = (function() {
 	function whileLoading(project, callback) {
 		const changes = project._changes;
 		const loading = isLoading;
-		const active = paper$1.project;
+		const active = getScope().project;
 		project._changes = null;
 		isLoading = true;
-		paper$1.project = project;
+		getScope().project = project;
 		try {
 			callback();
 		} finally {
 			project._changes = changes;
 			isLoading = loading;
-			paper$1.project = active;
+			getScope().project = active;
 		}
 	}
 	function importHostJSON(project, json, target) {
@@ -26816,64 +26979,102 @@ var paper = (function() {
 	}
 
 //#endregion
-//#region src/index.ts
-	const classes = {
-		Point,
-		Size,
-		Rectangle,
-		Matrix,
-		Line,
-		Project,
-		Item,
-		Group,
-		Layer,
-		Shape,
-		Raster,
-		SymbolItem,
-		SymbolDefinition,
-		HitResult,
-		Effect,
-		EffectInstance,
-		Segment,
-		Curve,
-		CurveLocation,
-		PathItem,
-		Path,
-		CompoundPath,
-		StrokeProfileStop,
-		PathFlattener,
-		TextItem,
-		PointText,
-		PathText,
-		AreaText,
-		TextStory,
-		TextRange,
-		Color,
-		Gradient,
-		GradientStop,
-		PatternDefinition,
-		Style,
-		View,
-		CanvasView,
-		Event,
-		DrawEvent,
-		KeyEvent,
-		MouseEvent,
-		Tool,
-		ToolEvent,
-		Tween
-	};
-	registerClasses({
-		...classes,
-		PaperScope
+//#region src/core.ts
+	var core_exports = /* @__PURE__ */ __exportAll({
+		AreaText: () => AreaText,
+		Base: () => Base,
+		CanvasView: () => CanvasView,
+		ChangeFlag: () => ChangeFlag,
+		Color: () => Color,
+		CompoundPath: () => CompoundPath,
+		Curve: () => Curve,
+		CurveLocation: () => CurveLocation,
+		DrawEvent: () => DrawEvent,
+		Effect: () => Effect,
+		EffectInstance: () => EffectInstance,
+		Event: () => Event,
+		Gradient: () => Gradient,
+		GradientStop: () => GradientStop,
+		Group: () => Group,
+		HitResult: () => HitResult,
+		Item: () => Item,
+		Key: () => Key,
+		KeyEvent: () => KeyEvent,
+		Layer: () => Layer,
+		Line: () => Line,
+		Matrix: () => Matrix,
+		MouseEvent: () => MouseEvent,
+		Numerical: () => numerical_exports,
+		PaperScope: () => PaperScope,
+		Path: () => Path,
+		PathFlattener: () => PathFlattener,
+		PathItem: () => PathItem,
+		PathText: () => PathText,
+		PatternDefinition: () => PatternDefinition,
+		Point: () => Point,
+		PointText: () => PointText,
+		Project: () => Project,
+		Raster: () => Raster,
+		Rectangle: () => Rectangle,
+		Segment: () => Segment,
+		Shape: () => Shape,
+		Size: () => Size,
+		StrokeProfileStop: () => StrokeProfileStop,
+		Style: () => Style,
+		SymbolDefinition: () => SymbolDefinition,
+		SymbolItem: () => SymbolItem,
+		TextItem: () => TextItem,
+		TextRange: () => TextRange,
+		TextStory: () => TextStory,
+		Tool: () => Tool,
+		ToolEvent: () => ToolEvent,
+		Tween: () => Tween,
+		View: () => View,
+		registerClasses: () => registerClasses$1,
+		use: () => use$1
 	});
+
+//#endregion
+//#region src/boolean/index.ts
+/**
+	* The boolean operations of path items, for `use(boolean)` with
+	* `paper/core`, see the `use()` function there.
+	*/
+	const boolean = { feature: {
+		name: "boolean",
+		booleanOperators,
+		createGraph,
+		splitGraph,
+		traceGraph
+	} };
+
+//#endregion
+//#region src/offset/index.ts
+/**
+	* Returns the region grown by the distance, or shrunk where it is negative.
+	*
+	* @param region the region to offset
+	* @param distance the distance to offset it by
+	* @param options the join at corners, `'miter'`, `'round'` or `'bevel'`,
+	*     and the miter limit, as with {@link PathItem#offset()}
+	* @return the offset region
+	*/
+	function offset(region, distance, { join = "miter", miterLimit = 10 } = {}) {
+		return offsetRegion(region, distance, join, miterLimit);
+	}
+	offset.feature = {
+		name: "offset",
+		offsetRegion,
+		offsetPath,
+		outlineStroke
+	};
+
+//#endregion
+//#region src/index.ts
+	use$1(boolean, offset);
+	const { registerClasses, use, ...classes } = core_exports;
 	const members = {
 		...classes,
-		Base,
-		PaperScope,
-		Numerical: numerical_exports,
-		ChangeFlag,
-		Key,
 		get document() {
 			return getDocument();
 		},
@@ -26890,7 +27091,6 @@ var paper = (function() {
 
 //#endregion
 //#region src/hosted/index.ts
-	registerClasses({ HostItem });
 	inject(PaperScope.prototype, { HostItem }, { enumerable: true });
 
 //#endregion
@@ -32445,6 +32645,9 @@ var paper = (function() {
 		if (getWindow()) View.updateFocus();
 		return exports;
 	} });
+
+//#endregion
+//#region src/paperscript/autoload.ts
 	const window = getWindow();
 	if (window) {
 		if (getDocument().readyState === "complete") setTimeout(() => load());
