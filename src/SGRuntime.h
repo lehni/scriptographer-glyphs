@@ -60,9 +60,10 @@ NS_ASSUME_NONNULL_BEGIN
 // Returns whether the tool's script handles the key:
 - (BOOL)handleKey:(NSString *)type event:(NSEvent *)event;
 
-// For SGScript: the active layer with its paths, writing the scripts' changes
-// back, and each unit of work's end.
+// For SGScript: the active layer with its paths, or any layer's, writing the
+// scripts' changes back, and each unit of work's end.
 - (nullable NSDictionary *)layerData;
+- (NSDictionary *)dataOfLayer:(GSLayer *)layer;
 - (NSArray *)setPaths:(NSArray<NSDictionary *> *)edits
 		layerKey:(NSNumber *)layerKey;
 // Selects the nodes of the paths, by their keys, and nothing else:

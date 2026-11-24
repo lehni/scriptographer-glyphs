@@ -5,6 +5,7 @@
 #import <Cocoa/Cocoa.h>
 #import "../src/SGScript.h"
 #import "../src/SGRuntime.h"
+#import <GlyphsCore/GlyphsCore.h>
 #import <netinet/in.h>
 #import <CommonCrypto/CommonDigest.h>
 
@@ -517,6 +518,32 @@ int main(void) {
 		CHECK([output isEqualToArray:(@[@"[3, 0, 0, -3, 0, 0] 2"])]);
 		[overlay stop];
 		[output removeAllObjects];
+
+		// Scripts get the nodes as they set them, which Glyphs rounds to the
+		// font's grid:
+		GSFont *font = [[GSFont alloc] init];
+		font.gridMain = 1;
+		[font addFontMaster:[[GSFontMaster alloc] init]];
+		GSGlyph *glyph = [[GSGlyph alloc] initWithName:@"a"];
+		[font addGlyph:glyph];
+		GSLayer *layer = [glyph layerForId:font.fontMasters[0].id];
+		GSPath *path = [[GSPath alloc] init];
+		path.nodes = @[
+			[[GSNode alloc] initWithPosition:NSMakePoint(0, 0) type:GSNodeTypeLine
+				connection:GSNodeConnectionSharp],
+			[[GSNode alloc] initWithPosition:NSMakePoint(10, 0) type:GSNodeTypeLine
+				connection:GSNodeConnectionSharp]
+		];
+		[layer addShape:path];
+		NSDictionary *data = [runtime dataOfLayer:layer];
+		[runtime setPaths:@[@{
+			@"key": data[@"paths"][0][@"key"],
+			@"nodes": @[@0, @0, @(GSNodeTypeLine), @0, @11.7, @5.5, @(GSNodeTypeLine), @0],
+			@"closed": @NO
+		}] layerKey:data[@"key"]];
+		CHECK(NSEqualPoints(path.nodes[1].position, NSMakePoint(12, 6)));
+		NSArray *nodes = [runtime dataOfLayer:layer][@"paths"][0][@"nodes"];
+		CHECK([nodes[4] isEqual:@11.7] && [nodes[5] isEqual:@5.5]);
 
 		// localStorage stays with the script, sessionStorage doesn't:
 		SGScript *again = [[SGScript alloc] initWithURL:url];

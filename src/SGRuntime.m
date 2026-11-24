@@ -86,11 +86,15 @@
 // Where paths keep the scripts' `item.data`, as JSON:
 static NSString *const dataKey = @"com.scriptographer.data";
 
-// The active layer with its paths, nodes flat as x, y, type, connection:
 - (NSDictionary *)layerData {
 	GSLayer *layer = [self activeLayer];
-	if (!layer)
-		return nil;
+	return layer ? [self dataOfLayer:layer] : nil;
+}
+
+// The layer with its paths, nodes flat as x, y, type, connection. Scripts
+// get the nodes' positions as they set them, which Glyphs rounds to the grid
+// only to show and keep them, so rounding doesn't add up over their changes:
+- (NSDictionary *)dataOfLayer:(GSLayer *)layer {
 	NSMutableArray *paths = [NSMutableArray array];
 	for (GSShape *shape in layer.shapes) {
 		if ([shape isKindOfClass:[GSPath class]]) {
@@ -101,7 +105,7 @@ static NSString *const dataKey = @"com.scriptographer.data";
 			for (GSNode *node in path.nodes) {
 				if (isSelected || [layer selectionContainsObject:node])
 					[selection addObject:@(nodes.count / 4)];
-				NSPoint position = node.position;
+				NSPoint position = node.positionPrecise;
 				[nodes addObject:@(position.x)];
 				[nodes addObject:@(position.y)];
 				[nodes addObject:@(node.type)];
@@ -147,7 +151,7 @@ static NSString *const dataKey = @"com.scriptographer.data";
 	for (NSUInteger i = 0; i < nodes.count; i++) {
 		NSPoint position = NSMakePoint(values[i * 4].doubleValue,
 				values[i * 4 + 1].doubleValue);
-		if (!NSEqualPoints(nodes[i].position, position))
+		if (!NSEqualPoints(nodes[i].positionPrecise, position))
 			nodes[i].position = position;
 	}
 	return YES;
