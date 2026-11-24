@@ -28,10 +28,10 @@ function createGlyphs(paths) {
         if (edit.remove) {
           layer.paths.splice(index, 1)
         } else if (edit.key != null) {
-          layer.paths[index] = { key: edit.key, closed: edit.closed, nodes: edit.nodes }
+          layer.paths[index] = { key: edit.key, closed: edit.closed, nodes: edit.nodes, data: edit.data || undefined }
         } else {
           const key = nextKey++
-          layer.paths.push({ key, closed: edit.closed, nodes: edit.nodes })
+          layer.paths.push({ key, closed: edit.closed, nodes: edit.nodes, data: edit.data || undefined })
           keys.push(key)
         }
       }
@@ -280,4 +280,57 @@ test('items without paths are dropped, with a warning', () => {
   `, 'text.js')
   assert.deepStrictEqual(layer.paths, [])
   assert.deepStrictEqual(output, ['Glyphs only keeps paths: PointText items are dropped.'])
+})
+
+test('scripts read the data of paths and change it in place', () => {
+  const { layer, output, Scriptographer, execute } = createGlyphs([{
+    key: 2,
+    closed: false,
+    nodes: [0, 0, LINE, 0, 10, 0, LINE, 0],
+    data: '{"width":20}'
+  }])
+  execute(`
+    function onMouseDown(event) {
+      var path = project.activeLayer.firstChild
+      print(path.data.width)
+      path.data.angle = 30
+    }
+  `, 'data.js')
+  Scriptographer.mouse('mousedown', 0, 0, {})
+  assert.deepStrictEqual(output, ['20'])
+  assert.strictEqual(layer.paths[0].data, '{"width":20,"angle":30}')
+  assert.deepStrictEqual(plain(layer.paths[0].nodes), [0, 0, LINE, 0, 10, 0, LINE, 0])
+})
+
+test('new paths keep their data, and empty data is removed', () => {
+  const { layer, output, execute } = createGlyphs([{
+    key: 2,
+    closed: false,
+    nodes: [0, 0, LINE, 0, 10, 0, LINE, 0],
+    data: '{"width":20}'
+  }])
+  execute(`
+    project.activeLayer.firstChild.data = {}
+    new Path({ segments: [[0, 0], [10, 10]], data: { width: 5 } })
+  `, 'data.js')
+  assert.deepStrictEqual(output, [])
+  assert.deepStrictEqual(layer.paths.map(p => p.data), [undefined, '{"width":5}'])
+})
+
+test('the data that Glyphs changes reloads', () => {
+  const { layer, output, Scriptographer, execute } = createGlyphs([{
+    key: 2,
+    closed: false,
+    nodes: [0, 0, LINE, 0, 10, 0, LINE, 0],
+    data: '{"width":20}'
+  }])
+  execute(`
+    function onMouseDown(event) {
+      print(project.activeLayer.firstChild.data.width)
+    }
+  `, 'data.js')
+  Scriptographer.mouse('mousedown', 0, 0, {})
+  layer.paths[0].data = '{"width":40}'
+  Scriptographer.mouse('mousedown', 0, 0, {})
+  assert.deepStrictEqual(output, ['20', '40'])
 })

@@ -83,6 +83,9 @@
 			: nil;
 }
 
+// Where paths keep the scripts' `item.data`, as JSON:
+static NSString *const dataKey = @"com.scriptographer.data";
+
 // The active layer with its paths, nodes flat as x, y, type, connection:
 - (NSDictionary *)layerData {
 	GSLayer *layer = [self activeLayer];
@@ -104,12 +107,16 @@
 				[nodes addObject:@(node.type)];
 				[nodes addObject:@(node.connection)];
 			}
-			[paths addObject:@{
+			NSMutableDictionary *entry = [@{
 				@"key": [self keyForObject:path],
 				@"closed": @(path.closed),
 				@"nodes": nodes,
 				@"selection": selection
-			}];
+			} mutableCopy];
+			id json = [path userDataForKey:dataKey];
+			if ([json isKindOfClass:[NSString class]])
+				entry[@"data"] = json;
+			[paths addObject:entry];
 		}
 	}
 	return @{ @"key": [self keyForObject:layer], @"paths": paths };
@@ -146,6 +153,14 @@
 	return YES;
 }
 
+// The data as JSON, or '' to remove it:
+- (void)setData:(NSString *)json ofPath:(GSPath *)path {
+	if (![json isKindOfClass:[NSString class]]
+			|| [json isEqual:[path userDataForKey:dataKey] ?: @""])
+		return;
+	[path setUserData:json.length ? json : nil forKey:dataKey];
+}
+
 - (NSArray *)setPaths:(NSArray<NSDictionary *> *)edits layerKey:(NSNumber *)layerKey {
 	GSLayer *layer = [_objectsByKey objectForKey:layerKey];
 	NSMutableArray *keys = [NSMutableArray array];
@@ -166,10 +181,12 @@
 				path.nodes = [self nodesFromValues:values];
 			if (path.closed != closed)
 				path.closed = closed;
+			[self setData:edit[@"data"] ofPath:path];
 		} else if (!key || key == [NSNull null]) {
 			path = [[GSPath alloc] init];
 			path.nodes = [self nodesFromValues:values];
 			path.closed = closed;
+			[self setData:edit[@"data"] ofPath:path];
 			[layer addShape:path];
 			[keys addObject:[self keyForObject:path]];
 		}

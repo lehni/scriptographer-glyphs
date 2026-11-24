@@ -225,8 +225,9 @@ var Scriptographer = new function() {
                 closed: path.closed,
                 nodes: path.nodes,
                 selection: path.selection,
+                data: path.data,
                 signature: path.closed + ':' + path.nodes.join(',') + ':'
-                        + path.selection.join(',')
+                        + path.selection.join(',') + ':' + (path.data || '')
             };
         });
         snapshots[data.key] = snapshot;
@@ -266,13 +267,16 @@ var Scriptographer = new function() {
 
             getItem: function(key) {
                 var path = key !== layerKey && getPath(key);
-                return path
-                        ? ['Path', {
-                            segments: getSegments(path.nodes, path.closed,
-                                    path.selection),
-                            closed: path.closed
-                        }]
-                        : ['Layer', {}];
+                if (!path)
+                    return ['Layer', {}];
+                var props = {
+                    segments: getSegments(path.nodes, path.closed,
+                            path.selection),
+                    closed: path.closed
+                };
+                if (path.data)
+                    props.data = JSON.parse(path.data);
+                return ['Path', props];
             },
 
             getBounds: function(key) {
@@ -426,6 +430,12 @@ var Scriptographer = new function() {
         }
     }
 
+    // The data of a path as Glyphs keeps it, as JSON, or '' without any:
+    function getData(path) {
+        var data = path._data;
+        return data && Object.keys(data).length ? JSON.stringify(data) : '';
+    }
+
     function commitProject(project, layerKey) {
         var layer = project.layers[0],
             changes = project.takeChanges(),
@@ -455,7 +465,8 @@ var Scriptographer = new function() {
             if (child instanceof paper.Path) {
                 var edit = {
                     nodes: getNodes(child, getLayerMatrix(child, layer)),
-                    closed: child.closed
+                    closed: child.closed,
+                    data: getData(child)
                 };
                 if (child.key != null) {
                     edit.key = child.key;
@@ -470,8 +481,13 @@ var Scriptographer = new function() {
                 var paths = child.getItems({ class: paper.Path });
                 paths.forEach(function(path) {
                     var nodes = getNodes(path, getLayerMatrix(path, layer));
-                    if (nodes.length)
-                        edits.push({ nodes: nodes, closed: path.closed });
+                    if (nodes.length) {
+                        edits.push({
+                            nodes: nodes,
+                            closed: path.closed,
+                            data: getData(path)
+                        });
+                    }
                 });
                 if (!paths.length)
                     warnDropped(child);
