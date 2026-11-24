@@ -52,7 +52,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)callHandler:(NSString *)name;
 
 // Draws the script's overlay into the edit view's context, in the layer's
-// coordinates, `scale` its pixels per unit:
+// coordinates, `scale` the view's points per unit:
 - (void)drawOverlayInContext:(CGContextRef)context scale:(double)scale;
 
 // Stops it, closing its palettes, and lets go of its realm:

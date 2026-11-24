@@ -10,8 +10,8 @@ function onMouseMove(event) {
 
 project.activeLayer.onDraw = function(event) {
     var ctx = event.context,
-        // One pixel of the view, in the glyph's units:
-        pixel = 1 / event.pixelRatio
+        // One point of the view, in the glyph's units:
+        pixel = 1 / event.matrix.scaling.x
     ctx.font = 11 * pixel + 'px sans-serif'
     ctx.fillStyle = '#e0368b'
     this.children.forEach(function(path) {

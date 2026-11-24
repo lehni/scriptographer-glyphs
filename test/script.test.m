@@ -500,6 +500,24 @@ int main(void) {
 		]]));
 		[output removeAllObjects];
 
+		// Overlays draw in the view's points, as in VectorCraft: at a zoom of
+		// 3, on a screen of 2 device pixels per point:
+		SGScript *overlay = [[SGScript alloc] initWithURL:url];
+		[overlay execute:@
+			"project.activeLayer.onDraw = function(event) {"
+			"  print(event.matrix.values, event.pixelRatio)"
+			"}"];
+		CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+		CGContextRef view = CGBitmapContextCreate(NULL, 4, 4, 8, 0, space,
+				(CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+		CGContextScaleCTM(view, 2 * 3, 2 * 3);
+		[overlay drawOverlayInContext:view scale:3];
+		CGContextRelease(view);
+		CGColorSpaceRelease(space);
+		CHECK([output isEqualToArray:(@[@"[3, 0, 0, -3, 0, 0] 2"])]);
+		[overlay stop];
+		[output removeAllObjects];
+
 		// localStorage stays with the script, sessionStorage doesn't:
 		SGScript *again = [[SGScript alloc] initWithURL:url];
 		[again execute:@

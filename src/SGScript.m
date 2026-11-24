@@ -1006,13 +1006,18 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 	return NO;
 }
 
-// Scripts' coordinates have y down, the layer's up:
+// As in VectorCraft and browsers, the handlers draw in the view's points, with
+// the matrix from the script's coordinates, which have y down, the layer's up,
+// and the view's device pixels per point:
 - (void)drawOverlayInContext:(CGContextRef)context scale:(double)scale {
 	if (!_context)
 		return;
 	[_canvas drawView:context draw:^{
+		CGContextScaleCTM(context, 1 / scale, 1 / scale);
+		double pixelRatio = CGContextConvertSizeToDeviceSpace(context,
+				CGSizeMake(1, 1)).width;
 		[self->_scriptographer invokeMethod:@"drawOverlay" withArguments:@[
-			@[@1, @0, @0, @-1, @0, @0], @(scale)
+			@[@(scale), @0, @0, @(-scale), @0, @0], @(fabs(pixelRatio))
 		]];
 	}];
 }
