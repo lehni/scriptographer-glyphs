@@ -95,24 +95,18 @@ new Effect({
 ////////////////////////////////////////////////////////////////////////////////
 // Skeletons
 
-// The skeleton's use of the effect, with its width and its stops, at their
-// offsets along it, or null:
+// The skeleton's use of the effect, with its width and its stops, or null:
 function getProfile(item) {
 	return item.effects.filter(function(effect) {
 		return effect.type === 'stroke-profile';
 	})[0] || null;
 }
 
+// The stops as the effect keeps them, by their index between the path's
+// segments, so they follow when the app reshapes it:
 function getStops(path) {
 	return (path.strokeProfile || []).map(function(stop) {
-		var entry = { offset: stop.offset };
-		['width', 'aspect', 'angle'].forEach(function(key) {
-			if (stop[key] != null)
-				entry[key] = stop[key];
-		});
-		if (!stop.smooth)
-			entry.smooth = false;
-		return entry;
+		return stop.exportJSON({ asString: false });
 	});
 }
 
