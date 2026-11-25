@@ -468,8 +468,10 @@ var Scriptographer = new function() {
 
     // Draws the effects of the snapshot's paths that the script knows, where
     // their input changed, with the bundle's `applyEffect()`, one after the
-    // other, and has Glyphs keep what they draw:
-    function applyEffects(snapshot, applyEffect) {
+    // other, and has Glyphs keep what they draw. During the app's own
+    // interactions, only paths whose effects are all quick enough for them
+    // draw, see Effect#interactive:
+    function applyEffects(snapshot, applyEffect, isInteractive) {
         snapshot.keys.forEach(function(key) {
             var path = snapshot.paths[key],
                 input = path.effects && getEffectsInput(path);
@@ -481,7 +483,8 @@ var Scriptographer = new function() {
             });
             // Effects of other scripts are theirs to draw:
             if (!effects.every(function(effect) {
-                return scope.Effect.get(effect.type);
+                var definition = scope.Effect.get(effect.type);
+                return definition && (!isInteractive || definition.interactive);
             }))
                 return;
             try {
@@ -732,12 +735,12 @@ var Scriptographer = new function() {
 
         // Draws the effects of the active layer's paths that the script
         // knows, where their input changed, with the bundle's
-        // `applyEffect()`:
-        applyEffects: function(applyEffect) {
+        // `applyEffect()`, only the interactive ones when `isInteractive`:
+        applyEffects: function(applyEffect, isInteractive) {
             var snapshot = scope && takeSnapshot();
             if (snapshot) {
                 invoke(function() {
-                    applyEffects(snapshot, applyEffect);
+                    applyEffects(snapshot, applyEffect, isInteractive);
                 });
             }
         },

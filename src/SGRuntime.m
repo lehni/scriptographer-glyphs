@@ -21,6 +21,9 @@
 	// The layers that scripts changed in their current work, whose effects
 	// draw again once it's done, see -scriptDidWork:
 	NSMutableSet<GSLayer *> *_editedLayers;
+	// The layers that Glyphs' own tools change in an interaction, whose
+	// interactive effects draw along once it's done with the current step:
+	NSMutableSet<GSLayer *> *_interactiveLayers;
 }
 
 + (instancetype)sharedRuntime {
@@ -37,6 +40,7 @@
 	if (self) {
 		_scripts = [NSMutableDictionary dictionary];
 		_editedLayers = [NSMutableSet set];
+		_interactiveLayers = [NSMutableSet set];
 		_keysByObject = [NSMapTable weakToStrongObjectsMapTable];
 		_objectsByKey = [NSMapTable strongToWeakObjectsMapTable];
 		_nextKey = 1;
@@ -59,6 +63,8 @@
 		// Effects draw again once an edit is done, into its undo step:
 		[center addObserver:self selector:@selector(undoGroupWillClose:)
 				name:NSUndoManagerWillCloseUndoGroupNotification object:nil];
+		[center addObserver:self selector:@selector(interfaceWillUpdate:)
+				name:GSUpdateInterface object:nil];
 	}
 	return self;
 }
@@ -306,12 +312,34 @@ static NSString *const effectOfKey = @"com.scriptographer.effectOf";
 		return;
 	GSGlyph *glyph = (GSGlyph *)manager.glyph;
 	if ([glyph isKindOfClass:[GSGlyph class]])
-		[self applyEffectsOfLayers:glyph.layers.allValues];
+		[self applyEffectsOfLayers:glyph.layers.allValues interactive:NO];
+}
+
+// Glyphs asks its edit view to update with each step of its own tools'
+// drags, while their undo step stays open. Interactive effects draw along,
+// once Glyphs is done with the step, into that undo step:
+- (void)interfaceWillUpdate:(NSNotification *)notification {
+	GSEditViewController *controller = notification.object;
+	if (![controller isKindOfClass:[GSEditViewController class]])
+		return;
+	GSLayer *layer = controller.activeLayer;
+	if (!layer || !layer.undoManager.groupingLevel || _isApplyingEffects)
+		return;
+	BOOL isScheduled = _interactiveLayers.count > 0;
+	[_interactiveLayers addObject:layer];
+	if (!isScheduled) {
+		dispatch_async(dispatch_get_main_queue(), ^{
+			NSArray *layers = self->_interactiveLayers.allObjects;
+			[self->_interactiveLayers removeAllObjects];
+			[self applyEffectsOfLayers:layers interactive:YES];
+		});
+	}
 }
 
 // Has the scripts draw the effects of the layers' paths, those that they
-// know, where their input changed:
-- (void)applyEffectsOfLayers:(NSArray<GSLayer *> *)layers {
+// know, where their input changed, only interactive ones when `interactive`:
+- (void)applyEffectsOfLayers:(NSArray<GSLayer *> *)layers
+		interactive:(BOOL)interactive {
 	if (_isApplyingEffects)
 		return;
 	_isApplyingEffects = YES;
@@ -327,7 +355,7 @@ static NSString *const effectOfKey = @"com.scriptographer.effectOf";
 			continue;
 		_toolLayer = layer;
 		for (SGScript *script in scripts)
-			[script applyEffects];
+			[script applyEffects:interactive];
 	}
 	_toolLayer = toolLayer;
 	_isApplyingEffects = NO;
@@ -361,8 +389,10 @@ static NSString *const effectOfKey = @"com.scriptographer.effectOf";
 	if (isRunning) {
 		// The effects it defines draw what changed while it didn't run:
 		GSLayer *layer = [self activeLayer];
-		if (layer.parent)
-			[self applyEffectsOfLayers:layer.parent.layers.allValues];
+		if (layer.parent) {
+			[self applyEffectsOfLayers:layer.parent.layers.allValues
+					interactive:NO];
+		}
 		if (_stateHandler)
 			_stateHandler();
 	}
@@ -438,7 +468,7 @@ static NSString *const effectOfKey = @"com.scriptographer.effectOf";
 	if (_editedLayers.count) {
 		NSArray *layers = _editedLayers.allObjects;
 		[_editedLayers removeAllObjects];
-		[self applyEffectsOfLayers:layers];
+		[self applyEffectsOfLayers:layers interactive:NO];
 	}
 	if (script != _console && ![script isRunning]) {
 		if (script != _startingScript && _scripts[script.url.path] == script)

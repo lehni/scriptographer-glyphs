@@ -1116,11 +1116,11 @@ static bool shouldTerminate(JSContextRef context, void *info) {
 	[self didWork];
 }
 
-- (void)applyEffects {
+- (void)applyEffects:(BOOL)interactive {
 	if (!_context || _link)
 		return;
 	[_scriptographer invokeMethod:@"applyEffects"
-			withArguments:@[_natives[@"applyEffect"]]];
+			withArguments:@[_natives[@"applyEffect"], @(interactive)]];
 	[self didWork];
 }
 

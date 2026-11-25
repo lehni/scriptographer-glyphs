@@ -63,8 +63,8 @@ NS_ASSUME_NONNULL_BEGIN
 // Returns whether the script handles the key:
 - (BOOL)handleKey:(NSString *)type event:(NSEvent *)event;
 // Draws the effects it knows of the active layer's paths, where their input
-// changed:
-- (void)applyEffects;
+// changed, only the interactive ones when `interactive`:
+- (void)applyEffects:(BOOL)interactive;
 
 @end
 
