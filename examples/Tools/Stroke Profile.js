@@ -75,6 +75,8 @@ var drawing = null;
 new Effect({
 	type: 'stroke-profile',
 	label: 'Stroke Profile',
+	// Quick enough to draw as the app's own tools drag the skeleton:
+	interactive: true,
 	parameters: {
 		width: { label: 'Width', type: 'number', value: 60 },
 		stops: { value: [] }
