@@ -7,6 +7,7 @@
 #import "SGScript.h"
 #import <GlyphsCore/GlyphsCore.h>
 #import <GlyphsApp/GlyphsApp.h>
+#import <CommonCrypto/CommonDigest.h>
 
 @implementation SGRuntime {
 	NSMutableDictionary<NSString *, SGScript *> *_scripts;
@@ -106,6 +107,8 @@ static NSString *const effectsKey = @"com.scriptographer.effects";
 static NSString *const effectsInputKey = @"com.scriptographer.effectsInput";
 static NSString *const effectsIdKey = @"com.scriptographer.effectsId";
 static NSString *const effectOfKey = @"com.scriptographer.effectOf";
+// The fingerprint of what the effects drew, which edits in Glyphs change:
+static NSString *const effectsOutputKey = @"com.scriptographer.effectsOutput";
 
 - (NSDictionary *)layerData {
 	GSLayer *layer = [self activeLayer];
@@ -209,19 +212,44 @@ static NSString *const effectOfKey = @"com.scriptographer.effectOf";
 		[self removeEffectOutputOfPath:path];
 }
 
-- (void)removeEffectOutputOfPath:(GSPath *)path {
+// The paths that the path's effects drew:
+- (NSArray<GSPath *> *)effectOutputOfPath:(GSPath *)path {
 	NSString *outputId = [path userDataForKey:effectsIdKey];
 	GSLayer *layer = (GSLayer *)path.parent;
-	if (outputId && layer) {
-		NSMutableArray *outputs = [NSMutableArray array];
-		for (GSShape *shape in layer.shapes) {
-			if ([[shape userDataForKey:effectOfKey] isEqual:outputId])
-				[outputs addObject:shape];
-		}
-		[layer removeShapes:outputs];
+	NSMutableArray *outputs = [NSMutableArray array];
+	for (GSShape *shape in outputId ? layer.shapes : @[]) {
+		if ([[shape userDataForKey:effectOfKey] isEqual:outputId])
+			[outputs addObject:shape];
 	}
+	return outputs;
+}
+
+// A digest of the nodes of what the path's effects drew:
+- (NSString *)effectOutputFingerprintOfPath:(GSPath *)path {
+	NSMutableString *string = [NSMutableString string];
+	for (GSPath *output in [self effectOutputOfPath:path]) {
+		[string appendFormat:@"%d", output.closed];
+		for (GSNode *node in output.nodes) {
+			NSPoint position = node.positionPrecise;
+			[string appendFormat:@" %g,%g,%d", position.x, position.y,
+					node.type];
+		}
+		[string appendString:@";"];
+	}
+	const char *bytes = string.UTF8String;
+	unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+	CC_SHA256(bytes, (CC_LONG)strlen(bytes), digest);
+	NSMutableString *hex = [NSMutableString string];
+	for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++)
+		[hex appendFormat:@"%02x", digest[i]];
+	return hex;
+}
+
+- (void)removeEffectOutputOfPath:(GSPath *)path {
+	[(GSLayer *)path.parent removeShapes:[self effectOutputOfPath:path]];
 	[path removeUserDataForKey:effectsInputKey];
 	[path removeUserDataForKey:effectsIdKey];
+	[path removeUserDataForKey:effectsOutputKey];
 }
 
 - (void)setEffectOutput:(NSArray<NSDictionary *> *)outputs
@@ -234,16 +262,22 @@ static NSString *const effectOfKey = @"com.scriptographer.effectOf";
 	NSString *outputId = NSUUID.UUID.UUIDString;
 	[path setUserData:outputId forKey:effectsIdKey];
 	[path setUserData:input forKey:effectsInputKey];
-	// Beneath the path, in their order, locked, as they follow it:
+	// Beneath the path, in their order, locked, as they follow it, also their
+	// nodes and handles, which Glyphs' tools edit within locked paths:
 	NSInteger index = [layer.shapes indexOfObject:path];
 	for (NSDictionary *output in outputs) {
 		GSPath *shape = [[GSPath alloc] init];
-		shape.nodes = [self nodesFromValues:output[@"nodes"]];
+		NSArray<GSNode *> *nodes = [self nodesFromValues:output[@"nodes"]];
+		for (GSNode *node in nodes)
+			node.locked = YES;
+		shape.nodes = nodes;
 		shape.closed = [output[@"closed"] boolValue];
 		shape.locked = YES;
 		[shape setUserData:outputId forKey:effectOfKey];
 		[layer insertObject:shape inShapesAtIndex:index++];
 	}
+	[path setUserData:[self effectOutputFingerprintOfPath:path]
+			forKey:effectsOutputKey];
 	_editCount++;
 }
 
@@ -349,8 +383,17 @@ static NSString *const effectOfKey = @"com.scriptographer.effectOf";
 		[scripts addObject:_console];
 	for (GSLayer *layer in layers) {
 		BOOL hasEffects = NO;
-		for (GSShape *shape in layer.shapes)
-			hasEffects = hasEffects || [shape userDataForKey:effectsKey];
+		for (GSShape *shape in layer.shapes) {
+			if (![shape userDataForKey:effectsKey])
+				continue;
+			hasEffects = YES;
+			// What the effects drew and Glyphs' tools changed, which locking
+			// doesn't fully prevent, they draw again, once the edit is done:
+			NSString *fingerprint = [shape userDataForKey:effectsOutputKey];
+			if (!interactive && fingerprint && ![fingerprint isEqual:
+					[self effectOutputFingerprintOfPath:(GSPath *)shape]])
+				[shape removeUserDataForKey:effectsInputKey];
+		}
 		if (!hasEffects)
 			continue;
 		_toolLayer = layer;

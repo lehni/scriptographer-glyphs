@@ -565,12 +565,21 @@ int main(void) {
 		CHECK(NSEqualPoints(shifted.nodes[1].positionPrecise,
 				NSMakePoint(16.7, 5.5)));
 		CHECK(shifted.locked && !path.locked);
+		CHECK([[shifted.nodes valueForKey:@"locked"] isEqualToArray:
+				(@[@YES, @YES])]);
 		path.nodes[1].position = NSMakePoint(20, 0);
 		runLoop(0.01);
 		CHECK(layer.shapes.count == 2);
 		shifted = (GSPath *)layer.shapes[0];
 		CHECK(NSEqualPoints(shifted.nodes[1].positionPrecise,
 				NSMakePoint(25, 0)));
+		// What Glyphs' tools change in what the effect drew, it draws again:
+		shifted.nodes[1].position = NSMakePoint(40, 40);
+		runLoop(0.01);
+		shifted = (GSPath *)layer.shapes[0];
+		CHECK(NSEqualPoints(shifted.nodes[1].positionPrecise,
+				NSMakePoint(25, 0)));
+		[glyph.undoManager undo];
 		[glyph.undoManager undo];
 		CHECK(layer.shapes.count == 2);
 		shifted = (GSPath *)layer.shapes[0];
