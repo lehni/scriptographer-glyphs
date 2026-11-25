@@ -121,9 +121,10 @@ function loadStops(path) {
 }
 
 // The skeleton that the tool edits, letting go of it once the app removed it
-// or its effect:
+// or its effect, or left it without curves to measure, as when expanding it:
 function getSkeleton() {
-	if (skeleton && (!skeleton.isInserted() || !getProfile(skeleton)))
+	if (skeleton && (!skeleton.isInserted() || !getProfile(skeleton)
+			|| !skeleton.curves.length))
 		edit(null);
 	return skeleton;
 }
