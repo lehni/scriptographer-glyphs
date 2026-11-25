@@ -456,3 +456,25 @@ test('during interactions, effects wait for the end unless interactive', () => {
   Scriptographer.applyEffects(natives.applyEffect, false)
   assert.strictEqual(layer.effectOutputs, 1)
 })
+
+test('interactive effects draw during interactions', () => {
+  const { layer, output, natives, Scriptographer, execute } = createGlyphs([{
+    key: 2,
+    closed: false,
+    nodes: [0, 0, LINE, 0, 10, 0, LINE, 0],
+    effects: '[{"type":"shift","parameters":{"x":5}}]'
+  }])
+  execute(`
+    new Effect({
+      type: 'shift',
+      interactive: true,
+      parameters: { x: { type: 'number', value: 0 } },
+      onApply: function(event) {
+        return event.art.translate(this.x, 0)
+      }
+    })
+  `, 'effects.js')
+  Scriptographer.applyEffects(natives.applyEffect, true)
+  assert.deepStrictEqual(output, [])
+  assert.deepStrictEqual(plain(layer.paths[0].nodes), [5, 0, LINE, 0, 15, 0, LINE, 0])
+})

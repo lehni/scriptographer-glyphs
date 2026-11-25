@@ -9,7 +9,7 @@
  *
  * All rights reserved.
  *
- * Date: Wed Nov 25 00:09:24 2026 +0100
+ * Date: Wed Nov 25 01:43:21 2026 +0100
  *
  ***
  *
@@ -1184,6 +1184,11 @@ var paper = (function() {
 //#endregion
 //#region src/core/features.ts
 	const features = {};
+	const entries$1 = {
+		effects: "core",
+		tween: "core",
+		raster: "core"
+	};
 	/**
 	* Adds the features to the library that `paper/core` leaves out, e.g.
 	* `use(boolean)` with `boolean` from `paper/boolean` for the boolean
@@ -1201,8 +1206,17 @@ var paper = (function() {
 	*/
 	function getFeature(name) {
 		const feature = features[name];
-		if (!feature) throw new Error(`Unable to use ${name} without use(${name}) from 'paper/${name}'.`);
+		if (!feature) throw new Error(`Unable to use ${name} without use(${name}) from 'paper/${entries$1[name] ?? name}'.`);
 		return feature;
+	}
+	/**
+	* Returns the feature if it was added through use(), for what works without
+	* it too.
+	*
+	* @private
+	*/
+	function findFeature(name) {
+		return features[name];
 	}
 
 //#endregion
@@ -1586,19 +1600,65 @@ var paper = (function() {
 		static random() {
 			return new Size(Math.random(), Math.random());
 		}
+		/**
+		* {@grouptitle Math Functions}
+		*
+		* Returns a new size with rounded {@link #width} and {@link #height}
+		* values. The object itself is not modified!
+		*
+		*
+		* @example
+		* var size = new Size(10.2, 10.9);
+		* var roundSize = size.round();
+		* console.log(roundSize); // {x: 10, y: 11}
+		*/
+		round() {
+			return new Size(Math.round(this.width), Math.round(this.height));
+		}
+		/**
+		* Returns a new size with the nearest greater non-fractional values to the
+		* specified {@link #width} and {@link #height} values. The object itself is
+		* not modified!
+		*
+		*
+		* @example
+		* var size = new Size(10.2, 10.9);
+		* var ceilSize = size.ceil();
+		* console.log(ceilSize); // {x: 11, y: 11}
+		*/
+		ceil() {
+			return new Size(Math.ceil(this.width), Math.ceil(this.height));
+		}
+		/**
+		* Returns a new size with the nearest smaller non-fractional values to the
+		* specified {@link #width} and {@link #height} values. The object itself is
+		* not modified!
+		*
+		*
+		* @example
+		* var size = new Size(10.2, 10.9);
+		* var floorSize = size.floor();
+		* console.log(floorSize); // {x: 10, y: 10}
+		*/
+		floor() {
+			return new Size(Math.floor(this.width), Math.floor(this.height));
+		}
+		/**
+		* Returns a new size with the absolute values of the specified
+		* {@link #width} and {@link #height} values. The object itself is not
+		* modified!
+		*
+		*
+		* @example
+		* var size = new Size(-5, 10);
+		* var absSize = size.abs();
+		* console.log(absSize); // {x: 5, y: 10}
+		*/
+		abs() {
+			return new Size(Math.abs(this.width), Math.abs(this.height));
+		}
 		static {
 			registerClasses$1({ Size: this });
-			for (const key of [
-				"round",
-				"ceil",
-				"floor",
-				"abs"
-			]) {
-				const op = Math[key];
-				inject(this.prototype, { [key]() {
-					return new Size(op(this.width), op(this.height));
-				} });
-			}
 		}
 	};
 	/**
@@ -1606,6 +1666,7 @@ var paper = (function() {
 	* through setting itself again on the property that produced it.
 	*
 	* @private
+	* @internal
 	*/
 	var LinkedSize = class extends Size {
 		#width;
@@ -1619,11 +1680,11 @@ var paper = (function() {
 			this.#owner = owner;
 			this.#key = key;
 		}
-		_set(width, height, _dontNotify) {
+		_set(width, height) {
 			if (#width in this) {
 				this.#width = width;
 				this.#height = height;
-				if (!_dontNotify) this.#owner[this.#key] = this;
+				this.#owner[this.#key] = this;
 			}
 			return this;
 		}
@@ -1755,29 +1816,23 @@ var paper = (function() {
 		* rectangle, unlike {@link #topLeft}.
 		*/
 		get point() {
-			return this._getPoint();
+			return new LinkedPoint(this.x, this.y, this, "point");
 		}
 		set point(point) {
 			const { x, y } = Point.from(point);
 			this.x = x;
 			this.y = y;
 		}
-		_getPoint(_dontLink) {
-			return _dontLink ? new Point(this.x, this.y) : new LinkedPoint(this.x, this.y, this, "point");
-		}
 		/**
 		* The size of the rectangle
 		*/
 		get size() {
-			return this._getSize();
+			return new LinkedSize(this.width, this.height, this, "size");
 		}
 		set size(size) {
 			const { width, height } = Size.from(size);
 			this.width = width;
 			this.height = height;
-		}
-		_getSize(_dontLink) {
-			return _dontLink ? new Size(this.width, this.height) : new LinkedSize(this.width, this.height, this, "size");
 		}
 		/**
 		* {@grouptitle Side Positions}
@@ -1853,15 +1908,12 @@ var paper = (function() {
 		* The center point of the rectangle. Setting it moves the whole rectangle.
 		*/
 		get center() {
-			return this._getCenter();
+			return new LinkedPoint(this.centerX, this.centerY, this, "center");
 		}
 		set center(point) {
 			const { x, y } = Point.from(point);
 			this.centerX = x;
 			this.centerY = y;
-		}
-		_getCenter(_dontLink) {
-			return _dontLink ? new Point(this.centerX, this.centerY) : new LinkedPoint(this.centerX, this.centerY, this, "center");
 		}
 		/**
 		* The area of the rectangle.
@@ -2033,9 +2085,11 @@ var paper = (function() {
 		}
 		scale(arg0, arg1, arg2) {
 			const hasVer = typeof arg1 === "number";
-			const scale = Point.from(arg0, hasVer ? arg1 : void 0);
-			const center = Point.from((hasVer ? arg2 : arg1) ?? this._getCenter(true));
-			return new Rectangle(this._getTopLeft(true).subtract(center).multiply(scale).add(center), this._getBottomRight(true).subtract(center).multiply(scale).add(center));
+			const { x: sx, y: sy } = Point.from(arg0, hasVer ? arg1 : void 0);
+			const center = (hasVer ? arg2 : arg1) ?? [this.centerX, this.centerY];
+			const { x: cx, y: cy } = Point.from(center);
+			const { left, top, right, bottom } = this;
+			return new Rectangle(new Point((left - cx) * sx + cx, (top - cy) * sy + cy), new Point((right - cx) * sx + cx, (bottom - cy) * sy + cy));
 		}
 		/**
 		* Returns the passed rectangle if it is one already, or else a new
@@ -2061,22 +2115,16 @@ var paper = (function() {
 				topCenter: ["centerX", "top"],
 				rightCenter: ["right", "centerY"],
 				bottomCenter: ["centerX", "bottom"]
-			})) {
-				const getter = `_get${capitalize(key)}`;
-				inject(this.prototype, {
-					[getter](_dontLink) {
-						return _dontLink ? new Point(this[keyX], this[keyY]) : new LinkedPoint(this[keyX], this[keyY], this, key);
-					},
-					get [key]() {
-						return this[getter]();
-					},
-					set [key](point) {
-						const { x, y } = Point.from(point);
-						this[keyX] = x;
-						this[keyY] = y;
-					}
-				});
-			}
+			})) inject(this.prototype, {
+				get [key]() {
+					return new LinkedPoint(this[keyX], this[keyY], this, key);
+				},
+				set [key](point) {
+					const { x, y } = Point.from(point);
+					this[keyX] = x;
+					this[keyY] = y;
+				}
+			});
 		}
 	};
 	/**
@@ -2101,13 +2149,13 @@ var paper = (function() {
 			this.#owner = owner;
 			this.#key = key;
 		}
-		_set(x, y, width, height, _dontNotify) {
+		_set(x, y, width, height) {
 			if (#owner in this) {
 				this._x = x;
 				this._y = y;
 				this._width = width;
 				this._height = height;
-				if (!_dontNotify) this.#owner[this.#key] = this;
+				this.#owner[this.#key] = this;
 			}
 			return this;
 		}
@@ -2312,9 +2360,10 @@ var paper = (function() {
 			};
 		} else {
 			const [rect, props] = readRectangle(object);
+			const { centerX, centerY, width, height } = rect;
 			return {
-				center: rect._getCenter(true),
-				radius: rect._getSize(true).divide(2),
+				center: new Point(centerX, centerY),
+				radius: new Size(width / 2, height / 2),
 				props
 			};
 		}
@@ -2371,7 +2420,7 @@ var paper = (function() {
 		*   basic types, to offer the same amount of flexibility when setting
 		*   values.
 		*/
-		_set(x, y, _dontNotify) {
+		_set(x, y) {
 			this.x = x;
 			this.y = y;
 			return this;
@@ -2871,6 +2920,7 @@ var paper = (function() {
 	* through setting itself again on the property that produced it.
 	*
 	* @private
+	* @internal
 	*/
 	var LinkedPoint = class extends Point {
 		#x;
@@ -2884,11 +2934,11 @@ var paper = (function() {
 			this.#owner = owner;
 			this.#key = key;
 		}
-		_set(x, y, _dontNotify) {
+		_set(x, y) {
 			if (#x in this) {
 				this.#x = x;
 				this.#y = y;
-				if (!_dontNotify) this.#owner[this.#key] = this;
+				this.#owner[this.#key] = this;
 			}
 			return this;
 		}
@@ -2929,6 +2979,55 @@ var paper = (function() {
 			0
 		];
 	}
+	function setMatrix(v, a, b, c, d, tx, ty) {
+		v[0] = a;
+		v[1] = b;
+		v[2] = c;
+		v[3] = d;
+		v[4] = tx;
+		v[5] = ty;
+	}
+	function resetMatrix(v) {
+		setMatrix(v, 1, 0, 0, 1, 0, 0);
+	}
+	function appendMatrix(v, m) {
+		const a1 = v[0];
+		const b1 = v[1];
+		const c1 = v[2];
+		const d1 = v[3];
+		const a2 = m[0];
+		const b2 = m[2];
+		const c2 = m[1];
+		const d2 = m[3];
+		const tx2 = m[4];
+		const ty2 = m[5];
+		v[0] = a2 * a1 + c2 * c1;
+		v[2] = b2 * a1 + d2 * c1;
+		v[1] = a2 * b1 + c2 * d1;
+		v[3] = b2 * b1 + d2 * d1;
+		v[4] += tx2 * a1 + ty2 * c1;
+		v[5] += tx2 * b1 + ty2 * d1;
+	}
+	function prependMatrix(v, m) {
+		const a1 = v[0];
+		const b1 = v[1];
+		const c1 = v[2];
+		const d1 = v[3];
+		const tx1 = v[4];
+		const ty1 = v[5];
+		const a2 = m[0];
+		const b2 = m[2];
+		const c2 = m[1];
+		const d2 = m[3];
+		const tx2 = m[4];
+		const ty2 = m[5];
+		v[0] = a2 * a1 + b2 * b1;
+		v[2] = a2 * c1 + b2 * d1;
+		v[1] = c2 * a1 + d2 * b1;
+		v[3] = c2 * c1 + d2 * d1;
+		v[4] = a2 * tx1 + b2 * ty1 + tx2;
+		v[5] = c2 * tx1 + d2 * ty1 + ty2;
+	}
 	function translateMatrix(v, x, y) {
 		v[4] += x * v[0] + y * v[2];
 		v[5] += x * v[1] + y * v[3];
@@ -2956,8 +3055,8 @@ var paper = (function() {
 		v[4] += tx * a + ty * c;
 		v[5] += tx * b + ty * d;
 	}
-	function transformPoint(v, { x, y }, dest, _dontNotify) {
-		return (dest ?? new Point())._set(x * v[0] + y * v[2] + v[4], x * v[1] + y * v[3] + v[5], _dontNotify);
+	function transformPoint(v, { x, y }, dest) {
+		return (dest ?? new Point())._set(x * v[0] + y * v[2] + v[4], x * v[1] + y * v[3] + v[5]);
 	}
 	function inverseTransformPoint(v, point) {
 		const a = v[0];
@@ -3019,15 +3118,9 @@ var paper = (function() {
 			else throw new Error("Unsupported matrix parameters");
 			return this;
 		}
-		_set(a, b, c, d, tx, ty, _dontNotify) {
-			const v = this._values;
-			v[0] = a;
-			v[1] = b;
-			v[2] = c;
-			v[3] = d;
-			v[4] = tx;
-			v[5] = ty;
-			if (!_dontNotify) this.#changed();
+		_set(a, b, c, d, tx, ty) {
+			setMatrix(this._values, a, b, c, d, tx, ty);
+			this.#changed();
 			return this;
 		}
 		_serialize(options, dictionary) {
@@ -3071,11 +3164,9 @@ var paper = (function() {
 		* Resets the matrix by setting its values to the ones of the identity
 		* matrix that results in no transformation.
 		*/
-		reset(_dontNotify) {
-			const v = this._values;
-			v[0] = v[3] = 1;
-			v[1] = v[2] = v[4] = v[5] = 0;
-			if (!_dontNotify) this.#changed();
+		reset() {
+			resetMatrix(this._values);
+			this.#changed();
 			return this;
 		}
 		/**
@@ -3157,27 +3248,10 @@ var paper = (function() {
 		* @param matrix the matrix to append
 		* @return this matrix, modified
 		*/
-		append(matrix, _dontNotify) {
+		append(matrix) {
 			if (matrix) {
-				const v = this._values;
-				const m = matrix._values;
-				const a1 = v[0];
-				const b1 = v[1];
-				const c1 = v[2];
-				const d1 = v[3];
-				const a2 = m[0];
-				const b2 = m[2];
-				const c2 = m[1];
-				const d2 = m[3];
-				const tx2 = m[4];
-				const ty2 = m[5];
-				v[0] = a2 * a1 + c2 * c1;
-				v[2] = b2 * a1 + d2 * c1;
-				v[1] = a2 * b1 + c2 * d1;
-				v[3] = b2 * b1 + d2 * d1;
-				v[4] += tx2 * a1 + ty2 * c1;
-				v[5] += tx2 * b1 + ty2 * d1;
-				if (!_dontNotify) this.#changed();
+				appendMatrix(this._values, matrix._values);
+				this.#changed();
 			}
 			return this;
 		}
@@ -3188,29 +3262,10 @@ var paper = (function() {
 		* @param matrix the matrix to prepend
 		* @return this matrix, modified
 		*/
-		prepend(matrix, _dontNotify) {
+		prepend(matrix) {
 			if (matrix) {
-				const v = this._values;
-				const m = matrix._values;
-				const a1 = v[0];
-				const b1 = v[1];
-				const c1 = v[2];
-				const d1 = v[3];
-				const tx1 = v[4];
-				const ty1 = v[5];
-				const a2 = m[0];
-				const b2 = m[2];
-				const c2 = m[1];
-				const d2 = m[3];
-				const tx2 = m[4];
-				const ty2 = m[5];
-				v[0] = a2 * a1 + b2 * b1;
-				v[2] = a2 * c1 + b2 * d1;
-				v[1] = c2 * a1 + d2 * b1;
-				v[3] = c2 * c1 + d2 * d1;
-				v[4] = a2 * tx1 + b2 * ty1 + tx2;
-				v[5] = c2 * tx1 + d2 * ty1 + ty2;
-				if (!_dontNotify) this.#changed();
+				prependMatrix(this._values, matrix._values);
+				this.#changed();
 			}
 			return this;
 		}
@@ -3326,8 +3381,8 @@ var paper = (function() {
 		* A faster version of transform that only takes one point and does not
 		* attempt to convert it.
 		*/
-		_transformPoint(point, dest, _dontNotify) {
-			return transformPoint(this._values, point, dest, _dontNotify);
+		_transformPoint(point, dest) {
+			return transformPoint(this._values, point, dest);
 		}
 		_transformCoordinates(src, dst, count) {
 			const v = this._values;
@@ -3502,9 +3557,19 @@ var paper = (function() {
 //#endregion
 //#region src/basic/Line.ts
 /**
-	* The Line object represents..
+	* The Line object represents a straight line from a point to a second point,
+	* or from a point in the direction of a vector. It ends at its two points,
+	* unless it's {@link #infinite}, and then runs on through them in both
+	* directions. {@link TextRange#baseline} returns a line.
 	*
-	* @private
+	* @example
+	* var line = new Line([0, 0], [100, 0]);
+	* console.log(line.getDistance([50, 20])); // 20
+	* console.log(line.getDistance([130, 40])); // 50
+	* console.log(line.intersect(new Line([50, -10], [50, 10]))); // { x: 50, y: 0 }
+	*
+	* var axis = new Line({ point: [0, 0], vector: [1, 0], infinite: true });
+	* console.log(axis.getDistance([130, 40])); // 40
 	*/
 	var Line = class Line extends Base {
 		static {
@@ -3514,84 +3579,131 @@ var paper = (function() {
 		#py;
 		#vx;
 		#vy;
-		constructor(arg0, arg1, arg2, arg3, arg4) {
+		#infinite;
+		constructor(arg0, arg1) {
 			super();
-			let asVector;
-			if (typeof arg0 === "number") {
-				this.#px = arg0;
-				this.#py = arg1;
-				this.#vx = arg2;
-				this.#vy = arg3;
-				asVector = arg4;
-			} else {
-				const point1 = Point.from(arg0);
-				const point2 = Point.from(arg1);
-				this.#px = point1.x;
-				this.#py = point1.y;
-				this.#vx = point2.x;
-				this.#vy = point2.y;
-				asVector = arg2;
-			}
-			if (!asVector) {
-				this.#vx -= this.#px;
-				this.#vy -= this.#py;
-			}
+			const { from, to, point = from, vector, infinite = false } = arg1 === void 0 ? arg0 : {
+				from: arg0,
+				to: arg1
+			};
+			const { x, y } = Point.from(point);
+			const { x: vx, y: vy } = vector ? Point.from(vector) : Point.from(to).subtract(x, y);
+			this.#px = x;
+			this.#py = y;
+			this.#vx = vx;
+			this.#vy = vy;
+			this.#infinite = infinite;
 		}
 		/**
-		* The starting point of the line.
+		* The line's point, where it starts.
 		*/
 		get point() {
 			return new Point(this.#px, this.#py);
 		}
 		/**
-		* The direction of the line as a vector.
+		* The line's vector, from its point to its second point.
 		*/
 		get vector() {
 			return new Point(this.#vx, this.#vy);
 		}
 		/**
-		* The length of the line.
+		* The length of the line, from its point to its second point.
 		*/
 		get length() {
 			return this.vector.length;
 		}
 		/**
-		* @param line
-		* @param isInfinite
-		* @return the intersection point of the lines, `undefined` if the
-		*     two lines are collinear, or `null` if they don't intersect.
+		* Specifies whether the line runs on through its points in both
+		* directions, instead of ending at them.
 		*/
-		intersect(line, isInfinite) {
-			return Line.intersect(this.#px, this.#py, this.#vx, this.#vy, line.#px, line.#py, line.#vx, line.#vy, true, isInfinite);
+		get infinite() {
+			return this.#infinite;
 		}
 		/**
-		* @param point
-		* @param isInfinite
+		* Returns the point where the line intersects the other line, within the
+		* ends of each line that isn't infinite.
+		*
+		* @param line the other line
+		* @return the point of intersection, or `undefined` if the lines don't
+		*     intersect or are collinear
 		*/
-		getSide(point, isInfinite) {
+		intersect(line) {
+			return Line.intersect(this.#px, this.#py, this.#vx, this.#vy, line.#px, line.#py, line.#vx, line.#vy, true, this.#infinite, line.#infinite);
+		}
+		/**
+		* Returns on which side of the line the point lies, seen along its vector:
+		* `1` to the left, `-1` to the right, and `0` on the line. A point beyond
+		* the ends of a line that isn't infinite lies on the side of the end it's
+		* beyond, `-1` before its point and `1` after its second point.
+		*
+		* @param point the point to check
+		* @return `-1`, `0` or `1`
+		*/
+		getSide(point) {
 			const { x, y } = Point.from(point);
-			return Line.getSide(this.#px, this.#py, this.#vx, this.#vy, x, y, true, isInfinite);
+			return Line.getSide(this.#px, this.#py, this.#vx, this.#vy, x, y, true, this.#infinite);
 		}
 		/**
-		* @param point
+		* Returns the distance of the point from the line, which is the distance
+		* from its nearest end for points beyond the ends of a line that isn't
+		* infinite.
+		*
+		* @param point the point to measure the distance of
+		* @return the distance of the point from the line
 		*/
 		getDistance(point, y) {
-			return Math.abs(this.getSignedDistance(point, y));
+			const other = Point.from(point, y);
+			const px = this.#px;
+			const py = this.#py;
+			const vx = this.#vx;
+			const vy = this.#vy;
+			if (this.#infinite) return Line.getDistance(px, py, vx, vy, other.x, other.y, true);
+			else {
+				const dx = other.x - px;
+				const dy = other.y - py;
+				const u = clamp((dx * vx + dy * vy) / (vx * vx + vy * vy) || 0, 0, 1);
+				return Math.hypot(dx - u * vx, dy - u * vy);
+			}
 		}
 		/**
-		* @param point
+		* Returns the distance of the point from the line as
+		* {@link #getDistance(point)} measures it, positive on the side where
+		* {@link #getSide(point)} returns `1` and negative where it returns `-1`.
+		*
+		* @param point the point to measure the distance of
+		* @return the signed distance of the point from the line
 		*/
 		getSignedDistance(point, y) {
 			const other = Point.from(point, y);
-			return Line.getSignedDistance(this.#px, this.#py, this.#vx, this.#vy, other.x, other.y, true);
+			return this.#infinite ? Line.getSignedDistance(this.#px, this.#py, this.#vx, this.#vy, other.x, other.y, true) : this.getSide(other) * this.getDistance(other);
 		}
+		/**
+		* Checks whether the line runs in the same or the opposite direction as
+		* the other line, which it then lies on or runs parallel to.
+		*
+		* @param line the other line
+		* @return {@true if the lines are collinear}
+		*/
 		isCollinear(line) {
 			return Point.isCollinear(this.#vx, this.#vy, line.#vx, line.#vy);
 		}
+		/**
+		* Checks whether the line is perpendicular to the other line.
+		*
+		* @param line the other line
+		* @return {@true if the lines are orthogonal}
+		*/
 		isOrthogonal(line) {
 			return Point.isOrthogonal(this.#vx, this.#vy, line.#vx, line.#vy);
 		}
-		static intersect(p1x, p1y, v1x, v1y, p2x, p2y, v2x, v2y, asVector, isInfinite) {
+		/**
+		* @return a string representation of the line
+		*/
+		toString() {
+			return `{ point: ${this.point}, vector: ${this.vector}${this.#infinite ? ", infinite: true" : ""} }`;
+		}
+		/** @private */
+		static intersect(p1x, p1y, v1x, v1y, p2x, p2y, v2x, v2y, asVector, isInfinite1, isInfinite2) {
 			if (!asVector) {
 				v1x -= p1x;
 				v1y -= p1y;
@@ -3604,15 +3716,15 @@ var paper = (function() {
 				const dy = p1y - p2y;
 				let u1 = (v2x * dy - v2y * dx) / cross;
 				const u2 = (v1x * dy - v1y * dx) / cross;
-				const epsilon = EPSILON;
-				const uMin = -epsilon;
-				const uMax = 1 + epsilon;
-				if (isInfinite || uMin < u1 && u1 < uMax && uMin < u2 && u2 < uMax) {
-					if (!isInfinite) u1 = u1 <= 0 ? 0 : u1 >= 1 ? 1 : u1;
+				const uMin = -EPSILON;
+				const uMax = 1 + EPSILON;
+				if ((isInfinite1 || uMin < u1 && u1 < uMax) && (isInfinite2 || uMin < u2 && u2 < uMax)) {
+					if (!isInfinite1) u1 = u1 <= 0 ? 0 : u1 >= 1 ? 1 : u1;
 					return new Point(p1x + u1 * v1x, p1y + u1 * v1y);
 				}
 			}
 		}
+		/** @private */
 		static getSide(px, py, vx, vy, x, y, asVector, isInfinite) {
 			if (!asVector) {
 				vx -= px;
@@ -3627,6 +3739,7 @@ var paper = (function() {
 			}
 			return ccw < 0 ? -1 : ccw > 0 ? 1 : 0;
 		}
+		/** @private */
 		static getSignedDistance(px, py, vx, vy, x, y, asVector) {
 			if (!asVector) {
 				vx -= px;
@@ -3634,6 +3747,7 @@ var paper = (function() {
 			}
 			return vx === 0 ? vy > 0 ? x - px : px - x : vy === 0 ? vx < 0 ? y - py : py - y : ((x - px) * vy - (y - py) * vx) / (vy > vx ? Math.abs(vy) * Math.sqrt(1 + vx * vx / (vy * vy)) : Math.abs(vx) * Math.sqrt(1 + vy * vy / (vx * vx)));
 		}
+		/** @private */
 		static getDistance(px, py, vx, vy, x, y, asVector) {
 			return Math.abs(Line.getSignedDistance(px, py, vx, vy, x, y, asVector));
 		}
@@ -3642,12 +3756,23 @@ var paper = (function() {
 //#endregion
 //#region src/values/arcs.ts
 	function getArcThrough(from, through, to) {
-		const center = new Line(from.add(through).divide(2), through.subtract(from).rotate(90), true).intersect(new Line(through.add(to).divide(2), to.subtract(through).rotate(90), true), true);
-		const line = new Line(from, to);
-		const throughSide = line.getSide(through);
+		const center = new Line({
+			point: from.add(through).divide(2),
+			vector: through.subtract(from).rotate(90),
+			infinite: true
+		}).intersect(new Line({
+			point: through.add(to).divide(2),
+			vector: to.subtract(through).rotate(90),
+			infinite: true
+		}));
+		const throughSide = new Line(from, to).getSide(through);
 		if (center) {
 			let extent = from.subtract(center).getDirectedAngle(to.subtract(center));
-			const centerSide = line.getSide(center, true);
+			const centerSide = new Line({
+				from,
+				to,
+				infinite: true
+			}).getSide(center);
 			if (centerSide === 0) extent = throughSide * Math.abs(extent);
 			else if (throughSide === centerSide) extent += extent < 0 ? 360 : -360;
 			return getArc(from, to, center, extent);
@@ -7236,7 +7361,7 @@ var paper = (function() {
 						if (join === "miter") {
 							const direction1 = sides1[k].derivative.normalize();
 							const direction2 = sides2[k].derivative.normalize();
-							const miter = Line.intersect(side1.x, side1.y, direction1.x, direction1.y, side2.x, side2.y, direction2.x, direction2.y, true, true);
+							const miter = Line.intersect(side1.x, side1.y, direction1.x, direction1.y, side2.x, side2.y, direction2.x, direction2.y, true, true, true);
 							if (miter && miter.getDistance(point) <= miterLimit * pen.a) points.push(miter);
 						}
 						this.addPolygon(points.concat(side2, getPoint(sides2[k], pen, phi2), inner2));
@@ -8144,9 +8269,9 @@ var paper = (function() {
 				if (!normal.isZero()) vector = normal.multiply(u.dot(normal) / normal.dot(normal));
 			}
 		}
-		dest[1] = (dest[1] ?? new Point())._set(start.x, start.y, true);
-		dest[2] = (dest[2] ?? new Point())._set(start.x + vector.x, start.y + vector.y, true);
-		if (highlight) dest[3] = matrix._transformPoint(highlight, dest[3], true);
+		dest[1] = (dest[1] ?? new Point())._set(start.x, start.y);
+		dest[2] = (dest[2] ?? new Point())._set(start.x + vector.x, start.y + vector.y);
+		if (highlight) dest[3] = matrix._transformPoint(highlight, dest[3]);
 		dest[4] = aspect;
 		return dest;
 	}
@@ -10171,14 +10296,11 @@ var paper = (function() {
 		* circle.position.x += 100;
 		*/
 		get position() {
-			return this._getPosition();
+			const { x, y } = this._position ??= this._getPositionFromBounds();
+			return new LinkedPoint(x, y, this, "position");
 		}
 		set position(point) {
-			this.translate(Point.from(point).subtract(this._getPosition(true)));
-		}
-		_getPosition(_dontLink) {
-			const { x, y } = this._position ??= this._getPositionFromBounds();
-			return _dontLink ? new Point(x, y) : new LinkedPoint(x, y, this, "position");
+			this.translate(Point.from(point).subtract(this.position));
 		}
 		/**
 		* Internal method used to calculate position either from pivot point or
@@ -10190,7 +10312,11 @@ var paper = (function() {
 		* @private
 		*/
 		_getPositionFromBounds(bounds) {
-			return this._pivot ? this._matrix._transformPoint(this._pivot) : (bounds ?? this.getBounds())._getCenter(true);
+			if (this._pivot) return this._matrix._transformPoint(this._pivot);
+			else {
+				const { centerX, centerY } = bounds ?? this.getBounds();
+				return new Point(centerX, centerY);
+			}
 		}
 		/**
 		* The item's pivot point, defining the point around which all
@@ -10394,7 +10520,7 @@ var paper = (function() {
 					matrix.scale(value.x, value.y);
 					this._matrix.set(matrix);
 				} else {
-					const center = this._getPosition(true);
+					const center = this.position;
 					matrix.translate(center);
 					if (rotation) matrix.rotate(rotation);
 					matrix.scale(value.x / current.x, value.y / current.y);
@@ -10529,7 +10655,7 @@ var paper = (function() {
 		* @return the inserted instances
 		*/
 		insertEffects(index, effects) {
-			return insertEffects(this, index, effects);
+			return getFeature("effects").insertEffects(this, index, effects);
 		}
 		/**
 		* Removes the effect at the given index from the item's effects.
@@ -10549,7 +10675,7 @@ var paper = (function() {
 		* @return the removed instances
 		*/
 		removeEffects(start = 0, end) {
-			return removeEffects(this, start, end);
+			return findFeature("effects")?.removeEffects(this, start, end) ?? [];
 		}
 		_hasEffects() {
 			return !!this._effects?.some((instance) => instance._visible);
@@ -10563,7 +10689,7 @@ var paper = (function() {
 		* @return the output of the effects
 		*/
 		getEffectOutput() {
-			return getEffectOutput(this);
+			return this._hasEffects() ? getFeature("effects").getEffectOutput(this) : null;
 		}
 		_applyEffects(art) {
 			let output = null;
@@ -10596,7 +10722,7 @@ var paper = (function() {
 		* @param matrix the matrix to transform the bounds with
 		*/
 		getPreviewBounds(matrix) {
-			return getPreviewBounds(this, matrix);
+			return findFeature("effects")?.getPreviewBounds(this, matrix) ?? this.getStrokeBounds(matrix);
 		}
 		/**
 		* {@grouptitle Project Hierarchy}
@@ -10881,7 +11007,7 @@ var paper = (function() {
 		copyAttributes(source, excludeMatrix) {
 			this.style = source._style;
 			for (const key of this._attributes) if (Object.hasOwn(source, key)) this[key] = source[key];
-			if (!excludeMatrix) this._matrix._set(...source._matrix.values, true);
+			if (!excludeMatrix) setMatrix(this._matrix._values, ...source._matrix._values);
 			this.applyMatrix = source._applyMatrix;
 			this.pivot = source.pivot;
 			this.selection = source._selection;
@@ -10891,6 +11017,56 @@ var paper = (function() {
 			this._data = data ? clone$1(data) : null;
 			if (name) this.name = name;
 			this.effects = effects?.map((instance) => instance._getProps());
+		}
+		_combineAppearance(item) {
+			this.opacity = this._opacity * item._opacity;
+			this.visible = this._visible && item._visible;
+			this.locked = this._locked || item._locked;
+			this.guide = this._guide || item._guide;
+			if (item._blendMode !== "normal") this.blendMode = item._blendMode;
+			this.clipMask = item._clipMask;
+			this.selected = item.selected;
+			if (item._data) this._data = clone$1(item._data);
+			if (item._name) this.name = item._name;
+		}
+		/**
+		* Expands the item into plain items that draw the same, and replaces it
+		* with them, as Illustrator's Expand and Expand Appearance do: effects are
+		* applied, symbol items embedded, see {@link SymbolItem#embed()}, and
+		* shapes turned into paths, through all the item's descendants. Text and
+		* rasters stay as they are, as do gradients. Layers can't be replaced, so
+		* they keep their own effects, and expand their children.
+		*
+		* @option [options.strokes=false] {Boolean} whether to outline the strokes
+		*     of paths as filled areas next to their fills, dashed strokes as their
+		*     dashes, see {@link PathItem#outline()}
+		* @option [options.fills=false] {Boolean} whether to expand pattern fills
+		*     into the pattern's tiles, clipped by their paths
+		*
+		* @param options the expand options
+		* @return the item that replaces the item, or the item itself if nothing
+		*     replaces it. An item that has no parent isn't replaced, and the
+		*     result isn't inserted
+		*
+		* @example {@paperscript}
+		* var path = Path.star({
+		*     center: view.center,
+		*     points: 5,
+		*     radius1: 20,
+		*     radius2: 40,
+		*     fillColor: 'yellow',
+		*     strokeColor: 'black',
+		*     strokeWidth: 8,
+		*     dashArray: [10, 4]
+		* });
+		* // Replace the path with its fill and the outlines of its dashes:
+		* var result = path.expand({ strokes: true });
+		* result.lastChild.selected = true;
+		*/
+		expand(options) {
+			const result = expandItem(this, options ?? {});
+			if (result !== this) this.replaceWith(result);
+			return result;
 		}
 		/**
 		* Rasterizes the item into a newly created Raster object. The item itself
@@ -10930,30 +11106,7 @@ var paper = (function() {
 		* raster.scale(5);
 		*/
 		rasterize(options = {}) {
-			const { resolution, insert = getScope().settings.insertItems } = options;
-			const raster = options.raster ?? new Raster(Item.NO_INSERT);
-			const bounds = this.previewBounds;
-			const scale = (resolution || this.view.resolution) / 72;
-			const topLeft = bounds._getTopLeft(true).floor();
-			const bottomRight = bounds._getBottomRight(true).ceil();
-			const boundsSize = new Size(bottomRight.subtract(topLeft));
-			const rasterSize = boundsSize.multiply(scale);
-			raster._setSize(rasterSize, true);
-			if (!rasterSize.isZero()) {
-				const ctx = raster._getContext(true);
-				const matrix = new Matrix().translate(topLeft.negate());
-				ctx.save();
-				ctx.scale(scale, scale);
-				matrix.applyToContext(ctx);
-				drawItem(this, ctx, {
-					matrices: [matrix],
-					pixelRatio: scale
-				});
-				ctx.restore();
-			}
-			raster._matrix.set(new Matrix().translate(topLeft.add(boundsSize.divide(2))).scale(1 / scale));
-			if (insert) raster.insertAbove(this);
-			return raster;
+			return getFeature("raster").rasterizeItem(this, options);
 		}
 		/**
 		* {@grouptitle Geometric Tests}
@@ -11237,10 +11390,10 @@ var paper = (function() {
 		*     `options.asString`
 		*/
 		exportSVG(options) {
-			return exportItemSVG(this, options);
+			return getFeature("svg").exportItemSVG(this, options);
 		}
 		importSVG(svg, options) {
-			return importSVG(svg, options, this);
+			return getFeature("svg").importSVG(svg, options, this);
 		}
 		/**
 		* {@grouptitle Hierarchy Operations}
@@ -11704,7 +11857,7 @@ var paper = (function() {
 			if (!transformMatrix && !applyMatrix) return this;
 			if (transformMatrix) {
 				if (!matrix.isInvertible() && _matrix.isInvertible()) _matrix._backup = _matrix.values;
-				_matrix.prepend(matrix, true);
+				prependMatrix(_matrix._values, matrix._values);
 				const style = this._style;
 				const fillColor = style._get("fillColor", true);
 				const strokeColor = style._get("strokeColor", true);
@@ -11713,8 +11866,8 @@ var paper = (function() {
 			}
 			if (applyMatrix && (applyMatrix = this._transformContent(_matrix, _applyRecursively, _setApplyMatrix))) {
 				const pivot = this._pivot;
-				if (pivot) _matrix._transformPoint(pivot, pivot, true);
-				_matrix.reset(true);
+				if (pivot) _matrix._transformPoint(pivot, pivot);
+				resetMatrix(_matrix._values);
 				if (_setApplyMatrix && this._canApplyMatrix) this._applyMatrix = true;
 			}
 			const bounds = this._bounds;
@@ -11940,6 +12093,7 @@ var paper = (function() {
 			const easing = options?.easing;
 			const start = options?.start;
 			const duration = options != null && (typeof options === "number" ? options : options.duration);
+			const { Tween } = getFeature("tween");
 			const tween = new Tween(this, from, to, duration, easing, start);
 			function onFrame(event) {
 				tween._handleFrame(event.time * 1e3);
@@ -12104,7 +12258,7 @@ var paper = (function() {
 				"skew"
 			]) inject(this.prototype, { [key](value, ver, center) {
 				const hasVer = key !== "rotate" && typeof ver === "number";
-				const origin = (hasVer ? center : ver) ?? this._getPosition(true);
+				const origin = (hasVer ? center : ver) ?? this.position;
 				const matrix = new Matrix();
 				return this.transform(hasVer ? matrix[key](value, ver, origin) : matrix[key](value, origin));
 			} });
@@ -12349,6 +12503,7 @@ var paper = (function() {
 				if (res) res.item = this;
 				return res;
 			}
+			return null;
 		}
 		_draw(ctx, param) {
 			const { clip } = param;
@@ -12423,7 +12578,9 @@ var paper = (function() {
 		activate() {
 			this._project._activeLayer = this;
 		}
-		_hitTestSelf() {}
+		_hitTestSelf() {
+			return null;
+		}
 		static {
 			registerClasses$1({ Layer: this });
 			this.prototype._textWrapVersion = 0;
@@ -12455,8 +12612,9 @@ var paper = (function() {
 				radius
 			} : { rectangle: new Rectangle(rectangle, radius) };
 			const [rect, props] = readRectangle(object);
-			const size = rect._getSize(true);
-			return createShape("rectangle", rect._getCenter(true), size, Size.min(new Size(cornerRadius ?? 0), size.divide(2)), props);
+			const { centerX, centerY, width, height } = rect;
+			const size = new Size(width, height);
+			return createShape("rectangle", new Point(centerX, centerY), size, Size.min(new Size(cornerRadius ?? 0), size.divide(2)), props);
 		}
 		static ellipse(rectangle) {
 			const { center, radius, props } = readEllipse(isPlainObject(rectangle) ? rectangle : { rectangle });
@@ -12563,7 +12721,8 @@ var paper = (function() {
 			return this.clone(insert);
 		}
 		_asPathItem() {
-			const path = Path[this._type]({
+			const create = Path[this._type];
+			const path = create({
 				center: new Point(),
 				size: this._size,
 				radius: this._radius,
@@ -13222,7 +13381,7 @@ var paper = (function() {
 			return matrix ? matrix._transformBounds(rect) : rect;
 		}
 		_hitTestSelf(point) {
-			if (this._contains(point)) return new HitResult("pixel", this, { offset: point.add(this._size.divide(2)).round() });
+			return this._contains(point) ? new HitResult("pixel", this, { offset: point.add(this._size.divide(2)).round() }) : null;
 		}
 		_draw(ctx, param, viewMatrix) {
 			const { element } = this;
@@ -13262,6 +13421,41 @@ var paper = (function() {
 			});
 		}
 	};
+	function rasterizeItem(item, options = {}) {
+		const { resolution, insert = getScope().settings.insertItems } = options;
+		const raster = options.raster ?? new Raster(Item.NO_INSERT);
+		const bounds = item.previewBounds;
+		const scale = (resolution || item.view.resolution) / 72;
+		const { left, top, right, bottom } = bounds;
+		const topLeft = new Point(Math.floor(left), Math.floor(top));
+		const bottomRight = new Point(Math.ceil(right), Math.ceil(bottom));
+		const boundsSize = new Size(bottomRight.subtract(topLeft));
+		const rasterSize = boundsSize.multiply(scale);
+		raster._setSize(rasterSize, true);
+		if (!rasterSize.isZero()) {
+			const ctx = raster._getContext(true);
+			const matrix = new Matrix().translate(topLeft.negate());
+			ctx.save();
+			ctx.scale(scale, scale);
+			matrix.applyToContext(ctx);
+			drawItem(item, ctx, {
+				matrices: [matrix],
+				pixelRatio: scale
+			});
+			ctx.restore();
+		}
+		raster._matrix.set(new Matrix().translate(topLeft.add(boundsSize.divide(2))).scale(1 / scale));
+		if (insert) raster.insertAbove(item);
+		return raster;
+	}
+	/**
+	* The rasterizing of items, for `use(raster)` with `paper/core`, see the
+	* `use()` function there.
+	*/
+	const raster$1 = { feature: {
+		name: "raster",
+		rasterizeItem
+	} };
 
 //#endregion
 //#region src/item/ItemDefinition.ts
@@ -13427,23 +13621,18 @@ var paper = (function() {
 		*     has no parent
 		*/
 		embed() {
-			if (!this._parent) return null;
+			const item = this._parent ? this._createEmbedded() : null;
+			return item && this.replaceWith(item) ? item : null;
+		}
+		_createEmbedded() {
 			const item = this._definition._item.clone(false);
 			const values = this._style._values;
 			for (const child of [item, ...item.getItems({ match: () => true })]) if (!(child instanceof Group)) {
 				for (const [key, value] of Object.entries(values)) if (child._style._values[key] === void 0) child._style.set({ [key]: value?.clone ? value.clone() : value });
 			}
 			item.transform(this._matrix);
-			item.opacity = item._opacity * this._opacity;
-			item.visible = item._visible && this._visible;
-			item.locked = item._locked || this._locked;
-			item.guide = item._guide || this._guide;
-			if (this._blendMode !== "normal") item.blendMode = this._blendMode;
-			item.clipMask = this._clipMask;
-			item.selected = this.selected;
-			if (this._data) item._data = clone$1(this._data);
-			if (this._name) item.name = this._name;
-			return this.replaceWith(item) ? item : null;
+			item._combineAppearance(this);
+			return item;
 		}
 		static {
 			registerClasses$1({ SymbolItem: this });
@@ -13614,6 +13803,29 @@ var paper = (function() {
 			transform.f = placement.ty;
 			pattern.setTransform(transform);
 			return pattern;
+		}
+		_getTiles(bounds, matrix) {
+			const { tile } = this;
+			const cell = tile.size.add(this._spacing);
+			const inverse = matrix.inverted();
+			const tiles = new Group({ insert: false });
+			if (inverse && cell.width > 0 && cell.height > 0) {
+				const item = this._item.clone(false);
+				const copy = tile.contains(item.strokeBounds) ? item : new Group({
+					children: [Path.rectangle(tile), item],
+					clipped: true,
+					insert: false
+				});
+				const area = inverse._transformBounds(bounds);
+				const { floor, ceil } = Math;
+				const x0 = floor((area.left - tile.x) / cell.width);
+				const x1 = ceil((area.right - tile.x) / cell.width);
+				const y0 = floor((area.top - tile.y) / cell.height);
+				const y1 = ceil((area.bottom - tile.y) / cell.height);
+				for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) tiles.addChild(copy.clone(false).translate(x * cell.width, y * cell.height));
+				tiles.transform(matrix);
+			}
+			return tiles;
 		}
 		/**
 		* Returns the passed pattern if it is one already, or else a new pattern
@@ -13873,7 +14085,8 @@ var paper = (function() {
 	* the item itself, as the effects in Illustrator do. Creating one registers it
 	* under its type, replacing any effect registered there before, and items use
 	* it by that type, see {@link Item#effects}, each through an
-	* {@link EffectInstance} with its own parameters.
+	* {@link EffectInstance} with its own parameters. Hosts read from
+	* {@link #interactive} whether to draw it during interactions too.
 	*
 	* @example
 	* new Effect({
@@ -13896,6 +14109,7 @@ var paper = (function() {
 		#type;
 		#label;
 		#parameters;
+		#interactive;
 		_defaults;
 		_accessors;
 		/**
@@ -13918,9 +14132,9 @@ var paper = (function() {
 		/**
 		* Creates an effect and registers it under its type.
 		*
-		* @param props the {@link #type} of the effect, its {@link #label} and
-		*     {@link #parameters}, and {@link #onApply} and
-		*     {@link #onEditParameters}
+		* @param props the {@link #type} of the effect, its {@link #label},
+		*     {@link #parameters} and {@link #interactive}, and {@link #onApply}
+		*     and {@link #onEditParameters}
 		*/
 		constructor(props) {
 			super();
@@ -13929,6 +14143,7 @@ var paper = (function() {
 			this.#type = props.type;
 			this.#label = props.label || props.type;
 			this.#parameters = props.parameters ?? {};
+			this.#interactive = !!props.interactive;
 			this.onApply = props.onApply ?? null;
 			this.onEditParameters = props.onEditParameters ?? null;
 			for (const [key, parameter] of Object.entries(this.#parameters)) {
@@ -13972,6 +14187,16 @@ var paper = (function() {
 		*/
 		get parameters() {
 			return this.#parameters;
+		}
+		/**
+		* Specifies whether the effect is quick enough for hosts to draw it during
+		* interactions, while the user drags or edits an item with the host's own
+		* tools, and not only once they end. Paper.js itself doesn't read it.
+		*
+		* @default false
+		*/
+		get interactive() {
+			return this.#interactive;
 		}
 		/**
 		* Removes the effect from the registered effects.
@@ -14075,16 +14300,7 @@ var paper = (function() {
 			type: "outline",
 			label: "Outline Stroke",
 			onApply(event) {
-				return applyToPaths(event.art, (path) => {
-					if (!path.hasStroke()) return path;
-					const outline = path.outline({ insert: false });
-					if (!path.hasFill()) return outline;
-					path.strokeColor = null;
-					return new Group({
-						children: [path, outline],
-						insert: false
-					});
-				});
+				return applyToPaths(event.art, expandStroke);
 			}
 		});
 	}
@@ -14836,11 +15052,11 @@ var paper = (function() {
 		* });
 		*/
 		exportSVG(options) {
-			return exportProjectSVG(this, options);
+			return getFeature("svg").exportProjectSVG(this, options);
 		}
 		importSVG(svg, options) {
 			this.activate();
-			return importSVG(svg, options, this);
+			return getFeature("svg").importSVG(svg, options, this);
 		}
 		removeOn(type) {
 			const sets = this._removeSets;
@@ -15154,7 +15370,7 @@ var paper = (function() {
 			buffer = item._buffered && param.view && !param.clipItem && (item._buffer ??= {});
 			const version = item._project._bufferVersion;
 			isFresh = buffer && viewMatrix.equals(buffer.matrix) && buffer.version === version;
-			let bounds = isFresh ? buffer.bounds : getPreviewBounds(item, viewMatrix);
+			let bounds = isFresh ? buffer.bounds : item.getPreviewBounds(viewMatrix);
 			if (!isFresh && style._get("shadowColor", true)) {
 				const mx = viewMatrix._shiftless();
 				const blur = mx.transform(new Point(style._get("shadowBlur", true), 0));
@@ -15173,8 +15389,9 @@ var paper = (function() {
 				return;
 			}
 			prevOffset = param.offset;
-			itemOffset = param.offset = bounds._getTopLeft(true).floor();
-			itemSize = bounds.size.ceil().add(1).multiply(pixelRatio).floor();
+			const { left, top, width, height } = bounds;
+			itemOffset = param.offset = new Point(left, top).floor();
+			itemSize = new Size(width, height).ceil().add(1).multiply(pixelRatio).floor();
 			mainCtx = ctx;
 			if (buffer) {
 				let bufferCanvas = buffer.canvas;
@@ -15226,7 +15443,7 @@ var paper = (function() {
 		}
 		if (!isFresh && !event?.prevented) {
 			const drawParam = shadow && !direct ? Object.assign(Object.create(param), { dontShadow: true }) : param;
-			const output = getEffectOutput(item);
+			const output = item.getEffectOutput();
 			if (output) drawItem(output, ctx, Object.assign(Object.create(drawParam), { updateMatrix: false }), strokeMatrix);
 			else item._draw(ctx, drawParam, viewMatrix, strokeMatrix);
 		}
@@ -15283,7 +15500,7 @@ var paper = (function() {
 			if (handlersOnly) return;
 			if (itemSelected) item._drawSelected(ctx, mx, selectionItems);
 			if (positionSelected) {
-				const position = item._getPosition(true);
+				const { position } = item;
 				const { x, y } = item._parent?.localToGlobal(position) ?? position;
 				ctx.beginPath();
 				ctx.arc(x, y, half, 0, Math.PI * 2, true);
@@ -15473,6 +15690,18 @@ var paper = (function() {
 
 //#endregion
 //#region src/item/effects.ts
+/**
+	* The live effects of items, for `use(effects)` with `paper/core`, see the
+	* `use()` function there.
+	*/
+	const effects$1 = { feature: {
+		name: "effects",
+		Effect,
+		insertEffects,
+		removeEffects,
+		getEffectOutput,
+		getPreviewBounds
+	} };
 	function insertEffects(item, index, effects) {
 		const list = item._effects ??= [];
 		const inserted = effects.map((effect) => {
@@ -15509,6 +15738,8 @@ var paper = (function() {
 		const art = item.clone({ insert: false });
 		art.effects = null;
 		art.matrix = new Matrix();
+		art.opacity = 1;
+		art.blendMode = "normal";
 		function expand(source, copy) {
 			const children = source._children;
 			for (let i = 0, l = children ? children.length : 0; i < l; i++) {
@@ -15543,11 +15774,64 @@ var paper = (function() {
 	}
 
 //#endregion
+//#region src/item/expand.ts
+	function expandItem(item, options) {
+		const { strokes, fills } = options;
+		let result = item;
+		if (item._hasEffects() && !(item instanceof Layer)) result = getEffectReplacement(item);
+		else if (item instanceof SymbolItem) result = item._createEmbedded();
+		else if (item instanceof Shape) result = item.toPath(false);
+		else if (item instanceof PathItem && !item._clipMask) {
+			const isStroke = strokes && item.hasStroke();
+			if (isStroke || fills && item.fillColor?.type === "pattern") {
+				const path = item.clone({ insert: false });
+				path.opacity = 1;
+				path.blendMode = "normal";
+				path.name = null;
+				path._data = null;
+				result = isStroke ? expandStroke(path) : expandFill(path);
+				result._combineAppearance(item);
+			}
+		}
+		if (result !== item) return expandItem(result, options);
+		if (!(item instanceof CompoundPath)) for (const child of [...item._children ?? []]) {
+			const expanded = expandItem(child, options);
+			if (expanded !== child) child.replaceWith(expanded);
+		}
+		return item;
+	}
+	function getEffectReplacement(item) {
+		const output = item.getEffectOutput()?.clone({ insert: false });
+		if (output) {
+			output.transform(item._matrix);
+			output._combineAppearance(item);
+		}
+		return output ?? null;
+	}
+	function expandFill(path) {
+		const { pattern, matrix } = path.fillColor;
+		const mask = path.clone({ insert: false });
+		const tiles = pattern._getTiles(path.internalBounds, matrix);
+		tiles.transform(path._matrix);
+		const fill = new Group({
+			children: [mask, tiles],
+			clipped: true,
+			insert: false
+		});
+		path.fillColor = null;
+		return path.hasStroke() ? new Group({
+			children: [fill, path],
+			insert: false
+		}) : fill;
+	}
+
+//#endregion
 //#region src/path/SegmentPoint.ts
 /**
 	* An internal version of Point that notifies its segment of each change
 	*
 	* @private
+	* @internal
 	*/
 	var SegmentPoint = class extends Point {
 		_x;
@@ -15576,11 +15860,11 @@ var paper = (function() {
 			owner[key] = this;
 			if (selected) this.selected = true;
 		}
-		_set(x, y, _dontNotify) {
+		_set(x, y) {
 			if (#owner in this) {
 				this._x = x;
 				this._y = y;
-				if (!_dontNotify) this.#owner._changed(this);
+				this.#owner._changed(this);
 			}
 			return this;
 		}
@@ -15626,8 +15910,11 @@ var paper = (function() {
 	* objects that are connected by this segment.
 	*/
 	var Segment = class Segment extends Base {
+		/** @internal */
 		_point;
+		/** @internal */
 		_handleIn;
+		/** @internal */
 		_handleOut;
 		_path;
 		_index;
@@ -15674,6 +15961,7 @@ var paper = (function() {
 				return serialize(obj, options, true, dictionary);
 			}
 		}
+		/** @internal */
 		_changed(point) {
 			const path = this._path;
 			if (path) {
@@ -16061,15 +16349,13 @@ var paper = (function() {
 		interpolate(from, to, factor) {
 			const u = 1 - factor;
 			const v = factor;
-			const point1 = from._point;
-			const point2 = to._point;
-			const handleIn1 = from._handleIn;
-			const handleIn2 = to._handleIn;
-			const handleOut2 = to._handleOut;
-			const handleOut1 = from._handleOut;
-			this._point._set(u * point1._x + v * point2._x, u * point1._y + v * point2._y, true);
-			this._handleIn._set(u * handleIn1._x + v * handleIn2._x, u * handleIn1._y + v * handleIn2._y, true);
-			this._handleOut._set(u * handleOut1._x + v * handleOut2._x, u * handleOut1._y + v * handleOut2._y, true);
+			const interpolate = (point, point1, point2) => {
+				point._x = u * point1._x + v * point2._x;
+				point._y = u * point1._y + v * point2._y;
+			};
+			interpolate(this._point, from._point, to._point);
+			interpolate(this._handleIn, from._handleIn, to._handleIn);
+			interpolate(this._handleOut, from._handleOut, to._handleOut);
 			this._changed();
 		}
 		_transformCoordinates(matrix, coords, change) {
@@ -17450,7 +17736,7 @@ var paper = (function() {
 		_applyEffects(art) {
 			let output = super._applyEffects(art);
 			if (this._hasStrokeProfile()) {
-				if (output) output = Effect.get("outline")?.onApply({
+				if (output) output = getFeature("effects").Effect.get("outline")?.onApply({
 					art: output,
 					item: this
 				}) || output;
@@ -19384,7 +19670,7 @@ var paper = (function() {
 				if (handle1.isOrthogonal(handle2)) {
 					const pt1 = seg1._point;
 					const pt2 = seg2._point;
-					const corner = new Line(pt1, handle1, true).intersect(new Line(pt2, handle2, true), true);
+					const corner = Line.intersect(pt1.x, pt1.y, handle1.x, handle1.y, pt2.x, pt2.y, handle2.x, handle2.y, true, true, true);
 					return corner && isZero(handle1.length / corner.subtract(pt1).length - kappa) && isZero(handle2.length / corner.subtract(pt2).length - kappa);
 				}
 				return false;
@@ -20391,6 +20677,16 @@ var paper = (function() {
 		result.strokeColor = null;
 		return result;
 	}
+	function expandStroke(path) {
+		if (!path.hasStroke()) return path;
+		const outline = path.outline({ insert: false });
+		if (!path.hasFill()) return outline;
+		path.strokeColor = null;
+		return new Group({
+			children: [path, outline],
+			insert: false
+		});
+	}
 	function dashPathItem(item, options) {
 		const path = prepare(item);
 		let result = new Group({
@@ -20598,7 +20894,7 @@ var paper = (function() {
 		if (isArea) addPoint(point);
 		addPoint(point.add(normal1.transform(strokeMatrix)));
 		if (join === "miter") {
-			const corner = new Line(normal1, new Point(-normal1.y, normal1.x), true).intersect(new Line(normal2, new Point(-normal2.y, normal2.x), true), true);
+			const corner = Line.intersect(normal1.x, normal1.y, -normal1.y, normal1.x, normal2.x, normal2.y, -normal2.y, normal2.x, true, true, true);
 			if (corner?.length <= miterLimit * radius) addPoint(point.add(corner.transform(strokeMatrix)));
 		}
 		addPoint(point.add(normal2.transform(strokeMatrix)));
@@ -20833,10 +21129,11 @@ var paper = (function() {
 		} : { rectangle: new Rectangle(arg0, arg1) };
 		const [rect, props] = readRectangle(object);
 		const radius = corner && Size.from(corner);
-		const tl = rect._getTopLeft(true);
-		const tr = rect._getTopRight(true);
-		const br = rect._getBottomRight(true);
-		const bl = rect._getBottomLeft(true);
+		const { left, top, right, bottom, width, height } = rect;
+		const tl = new Point(left, top);
+		const tr = new Point(right, top);
+		const br = new Point(right, bottom);
+		const bl = new Point(left, bottom);
 		let segments;
 		if (!radius || radius.isZero()) segments = [
 			new Segment(tl),
@@ -20845,7 +21142,7 @@ var paper = (function() {
 			new Segment(bl)
 		];
 		else {
-			const { width: rx, height: ry } = Size.min(radius, rect._getSize(true).divide(2));
+			const { width: rx, height: ry } = Size.min(radius, new Size(width / 2, height / 2));
 			const hx = rx * KAPPA;
 			const hy = ry * KAPPA;
 			segments = [
@@ -21711,14 +22008,15 @@ var paper = (function() {
 					for (let j = 0, m = pieces.length; j < m; j++) {
 						const piece = pieces[j];
 						const local = point.subtract(piece.x, line.y + piece.y).rotate(-piece.rotation);
-						const rect = this._getBox(piece, piece.dx || 0, 0);
-						const closest = local.clamp(rect._getTopLeft(true), rect._getBottomRight(true));
+						const { left, top, right, bottom } = this._getBox(piece, piece.dx || 0, 0);
+						const closest = local.clamp(new Point(left, top), new Point(right, bottom));
 						if (piece.style.fillColor) {
 							if (local.subtract(closest).divide(options._tolerancePadding).length <= 1) return new HitResult("fill", this);
 						}
 					}
 				}
 			}
+			return null;
 		}
 		static {
 			registerClasses$1({ TextItem: this });
@@ -24892,6 +25190,14 @@ var paper = (function() {
 			defineEvents(this, { onUpdate: {} });
 		}
 	};
+	/**
+	* The tweens of items, for `use(tween)` with `paper/core`, see the `use()`
+	* function there.
+	*/
+	const tween$1 = { feature: {
+		name: "tween",
+		Tween
+	} };
 
 //#endregion
 //#region src/svg/svgStyles.ts
@@ -25014,6 +25320,39 @@ var paper = (function() {
 			else node.setAttribute(name, value);
 		}
 		return node;
+	}
+	const geometryAttributes = [
+		"d",
+		"points",
+		"transform",
+		"x",
+		"y",
+		"width",
+		"height",
+		"cx",
+		"cy",
+		"r",
+		"rx",
+		"ry",
+		"x1",
+		"y1",
+		"x2",
+		"y2"
+	];
+	/**
+	* Returns a hash of the geometry of the element and its descendants, which
+	* tells svgImport whether another editor changed what svgExport wrote for an
+	* item that it restores, see `data-paper-item`.
+	*
+	* @private
+	*/
+	function getGeometryHash(node) {
+		let hash = 2166136261;
+		for (const element of [node, ...node.querySelectorAll("*")]) for (const name of geometryAttributes) {
+			const value = element.getAttribute(name);
+			if (value != null) for (const char of `${name}=${value};`) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+		}
+		return (hash >>> 0).toString(16).padStart(8, "0");
 	}
 
 //#endregion
@@ -25501,11 +25840,17 @@ var paper = (function() {
 		return options.asString ? new (getDocument()).defaultView.XMLSerializer().serializeToString(svg).replace(/<defs>|<\/filter>|<\/defs>/g, "$&\n") : svg;
 	}
 	function exportSVG(item, options, isRoot) {
-		let output = getEffectOutput(item);
+		const output = getEffectReplacement(item);
 		if (output) {
-			output = output.clone({ insert: false });
-			output.transform(item._matrix);
-			return exportSVG(output, options, isRoot);
+			const node = exportSVG(output, options, isRoot);
+			node?.setAttribute("data-paper-item", JSON.stringify({
+				check: getGeometryHash(node),
+				item: item.exportJSON({
+					asString: false,
+					precision: options.precision
+				})
+			}));
+			return node;
 		}
 		const exporter = exporters[item.className];
 		let node = exporter?.(item, options);
@@ -26027,6 +26372,14 @@ var paper = (function() {
 			}
 		}
 	}
+	function restoreItem(node) {
+		const json = node.getAttribute("data-paper-item");
+		if (json) {
+			const { check, item } = JSON.parse(json);
+			if (check === getGeometryHash(node)) return Base.importJSON(item);
+		}
+		return null;
+	}
 	let sandbox;
 	function getSandbox() {
 		if (!sandbox?.contentDocument) {
@@ -26068,17 +26421,21 @@ var paper = (function() {
 		try {
 			settings.applyMatrix = false;
 			settings.insertItems = false;
+			let restored = null;
 			try {
-				item = importer?.(node, type, options, isRoot) ?? null;
+				restored = isElement ? restoreItem(node) : null;
+				item = restored ?? importer?.(node, type, options, isRoot) ?? null;
 			} finally {
 				settings.insertItems = insertItems;
 				settings.applyMatrix = applyMatrix;
 			}
-			if (item) {
+			if (item && !restored) {
 				if (isElement && item instanceof PathItem) setSegmentsData(item, node);
 				if (isElement && importer !== importGroup) item = applyAttributes(item, node, options, isRoot, type === "use" && !(item instanceof SymbolItem));
 				const data = isElement && getData$1(node);
 				if (data) item._data = data;
+			}
+			if (item) {
 				const { processItem } = options;
 				if (isElement && processItem) item = processItem({
 					item,
@@ -26814,7 +27171,7 @@ var paper = (function() {
 		item._guide = !!(flags & recordFlags.guide);
 		item._empty = !!(flags & recordFlags.empty);
 		item._selection = item._selection & ~ItemSelection.ITEM | (flags & recordFlags.selected ? ItemSelection.ITEM : 0);
-		item._matrix._set(a, b, c, d, tx, ty, true);
+		setMatrix(item._matrix._values, a, b, c, d, tx, ty);
 		item._boxes = columns.boxes ?? void 0;
 		item._boxIndex = i * boxSize;
 		item._bounds = void 0;
@@ -27030,7 +27387,10 @@ var paper = (function() {
 		ToolEvent: () => ToolEvent,
 		Tween: () => Tween,
 		View: () => View,
+		effects: () => effects$1,
+		raster: () => raster$1,
 		registerClasses: () => registerClasses$1,
+		tween: () => tween$1,
 		use: () => use$1
 	});
 
@@ -27070,9 +27430,22 @@ var paper = (function() {
 	};
 
 //#endregion
+//#region src/svg/index.ts
+/**
+	* The import and export of SVG, for `use(svg)` with `paper/core`, see the
+	* `use()` function there.
+	*/
+	const svg = { feature: {
+		name: "svg",
+		exportItemSVG,
+		exportProjectSVG,
+		importSVG
+	} };
+
+//#endregion
 //#region src/index.ts
-	use$1(boolean, offset);
-	const { registerClasses, use, ...classes } = core_exports;
+	use$1(boolean, offset, svg, effects$1, raster$1, tween$1);
+	const { registerClasses, use, effects, raster, tween, ...classes } = core_exports;
 	const members = {
 		...classes,
 		get document() {
@@ -32426,7 +32799,7 @@ var paper = (function() {
 			if (window && url && !window.location.href.indexOf(url)) {
 				const html = getDocument().documentElement.innerHTML;
 				const index = html.indexOf(code);
-				if (index >= 0) offset = html.substring(0, index + 1).match(lineBreaks).length + 1;
+				if (index >= 0) offset = (html.substring(0, index + 1).match(lineBreaks)?.length ?? 0) + 1;
 			}
 			const mappings = ["AA" + encodeVLQ(offset) + "A"];
 			mappings.length = (code.match(lineBreaks) ?? []).length + 1;
